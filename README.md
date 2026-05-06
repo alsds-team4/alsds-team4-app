@@ -1,4 +1,4 @@
-# AI-Assisted Location Decision Support System (ALSDS) — Teaam Seven Hills Analytics
+# AI-Assisted Location Decision Support System (ALSDS) — Team Seven Hills Analytics
 
 This repository provides the **baseline application and infrastructure** for the ALSDS capstone project.
 
