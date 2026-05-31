@@ -134,6 +134,102 @@ def db_structure():
             "error": str(e)
         }), 500
 
+# -------------------------
+# Run Huff Model
+# -------------------------
+
+@app.route("/api/run_huff", methods=["POST"])
+def api_run_huff():
+    try:
+        from huff_engine import run_huff_model
+
+        data = request.get_json(silent=True) or {}
+
+        candidate_lat = get_first_present(data, ["candidate_lat", "lat", "latitude"])
+        candidate_lon = get_first_present(data, ["candidate_lon", "lon", "lng", "longitude"])
+        business_category = get_first_present(data, ["business_category", "naics_code", "naics"])
+        floor_area = get_first_present(data, ["floor_area", "floor_area_sqm", "area", "area_sqm"])
+
+        missing = []
+        if candidate_lat is None:
+            missing.append("candidate_lat")
+        if candidate_lon is None:
+            missing.append("candidate_lon")
+        if business_category is None:
+            missing.append("business_category or naics_code")
+        if floor_area is None:
+            missing.append("floor_area or floor_area_sqm")
+
+        if missing:
+            return jsonify({
+                "ok": False,
+                "error": "Missing required inputs: " + ", ".join(missing)
+            }), 400
+
+        try:
+            candidate_lat = float(candidate_lat)
+            candidate_lon = float(candidate_lon)
+            floor_area = float(floor_area)
+            business_category = str(business_category).strip()
+        except Exception:
+            return jsonify({
+                "ok": False,
+                "error": "Invalid input type. Latitude, longitude, and floor area must be numeric. NAICS/business category must be provided."
+            }), 400
+
+        if not business_category:
+            return jsonify({
+                "ok": False,
+                "error": "Business category / NAICS code cannot be empty."
+            }), 400
+
+        if candidate_lat < -90 or candidate_lat > 90:
+            return jsonify({
+                "ok": False,
+                "error": "candidate_lat must be between -90 and 90."
+            }), 400
+
+        if candidate_lon < -180 or candidate_lon > 180:
+            return jsonify({
+                "ok": False,
+                "error": "candidate_lon must be between -180 and 180."
+            }), 400
+
+        if floor_area <= 0:
+            return jsonify({
+                "ok": False,
+                "error": "floor_area must be greater than zero."
+            }), 400
+
+        result = run_huff_model(
+            candidate_lat=candidate_lat,
+            candidate_lon=candidate_lon,
+            business_category=business_category,
+            floor_area=floor_area,
+            db_connection=None
+        )
+
+        explanation = generate_explanation(result)
+
+        return jsonify({
+            "ok": True,
+            "inputs": {
+                "candidate_lat": candidate_lat,
+                "candidate_lon": candidate_lon,
+                "business_category": business_category,
+                "floor_area": floor_area
+            },
+            "result": result,
+            "explanation": explanation
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
 
 # -------------------------
 # Ask Follow-up Questions
