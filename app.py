@@ -1,4 +1,5 @@
 import os
+import threading
 from flask import Flask, request, jsonify, render_template
 from openai import AzureOpenAI
 
@@ -42,86 +43,96 @@ def dbcheck():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-
 # -------------------------
-# Run Huff Model
+# Azure SQL Migration Admin Routes
 # -------------------------
 
-@app.route("/api/run_huff", methods=["POST"])
-def api_run_huff():
-    try:
-        from huff_engine import run_huff_model
+@app.route("/admin/migrate")
+def admin_migrate():
+    """
+    Starts the Azure SQL migration in a background thread.
+    Required by Module 7.
+    """
+    from migrate_to_azure_sql import execute_migration_task, migration_status
 
-        data = request.get_json(silent=True) or {}
-
-        candidate_lat = get_first_present(data, ["candidate_lat", "lat", "latitude"])
-        candidate_lon = get_first_present(data, ["candidate_lon", "lon", "lng", "longitude"])
-        business_category = get_first_present(data, ["business_category", "naics_code", "naics"])
-        floor_area = get_first_present(data, ["floor_area", "floor_area_sqm", "area", "area_sqm"])
-
-        missing = []
-        if candidate_lat is None:
-            missing.append("candidate_lat")
-        if candidate_lon is None:
-            missing.append("candidate_lon")
-        if business_category is None:
-            missing.append("business_category or naics_code")
-        if floor_area is None:
-            missing.append("floor_area or floor_area_sqm")
-
-        if missing:
-            return jsonify({
-                "ok": False,
-                "error": "Missing required inputs: " + ", ".join(missing)
-            }), 400
-
-        try:
-            candidate_lat = float(candidate_lat)
-            candidate_lon = float(candidate_lon)
-            floor_area = float(floor_area)
-            business_category = str(business_category).strip()
-        except Exception:
-            return jsonify({
-                "ok": False,
-                "error": "Invalid input type. Latitude, longitude, and floor area must be numeric. NAICS/business category must be provided."
-            }), 400
-
-        if not business_category:
-            return jsonify({"ok": False, "error": "Business category / NAICS code cannot be empty."}), 400
-
-        if candidate_lat < -90 or candidate_lat > 90:
-            return jsonify({"ok": False, "error": "candidate_lat must be between -90 and 90."}), 400
-
-        if candidate_lon < -180 or candidate_lon > 180:
-            return jsonify({"ok": False, "error": "candidate_lon must be between -180 and 180."}), 400
-
-        if floor_area <= 0:
-            return jsonify({"ok": False, "error": "floor_area must be greater than zero."}), 400
-
-        result = run_huff_model(
-            candidate_lat=candidate_lat,
-            candidate_lon=candidate_lon,
-            business_category=business_category,
-            floor_area=floor_area,
-            db_connection=None  # Teams can replace this with Azure SQL usage
-        )
-
-        explanation = generate_explanation(result)
-
+    if migration_status.get("is_running") is True:
         return jsonify({
-            "ok": True,
-            "inputs": {
-                "candidate_lat": candidate_lat,
-                "candidate_lon": candidate_lon,
-                "business_category": business_category,
-                "floor_area": floor_area
-            },
-            "result": result,
-            "explanation": explanation
-        })
+            "ok": False,
+            "message": "Migration is already running.",
+            "current_progress": migration_status
+        }), 202
+
+    thread = threading.Thread(target=execute_migration_task)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({
+        "ok": True,
+        "message": "Migration initialized successfully in the background.",
+        "check_status_url": "/admin/migrate/status"
+    }), 202
+
+
+@app.route("/admin/migrate/status")
+def admin_migrate_status():
+    """
+    Shows current migration progress.
+    Required by Module 7.
+    """
+    from migrate_to_azure_sql import migration_status
+
+    return jsonify(migration_status)
+
+
+@app.route("/db_structure")
+def db_structure():
+    """
+    Shows Azure SQL table names and row counts.
+    Required by Module 7.
+    """
+    try:
+        from db import get_connection
+
+        query = """
+            SELECT
+                t.name AS TABLE_NAME,
+                SUM(p.rows) AS row_count
+            FROM
+                sys.tables t
+            INNER JOIN
+                sys.indexes i ON t.object_id = i.object_id
+            INNER JOIN
+                sys.partitions p ON i.object_id = p.object_id
+                    AND i.index_id = p.index_id
+            WHERE
+                t.is_ms_shipped = 0
+                AND i.index_id IN (0, 1)
+            GROUP BY
+                t.name
+            ORDER BY
+                t.name;
+        """
+
+        structure_report = []
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                structure_report.append({
+                    "TABLE_NAME": str(row[0]),
+                    "row_count": int(row[1])
+                })
+
+        return jsonify(structure_report)
 
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 
 # -------------------------
