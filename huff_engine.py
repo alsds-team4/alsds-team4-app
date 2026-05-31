@@ -1,128 +1,123 @@
 """
-Huff Model Engine — ALSDS Baseline Version
+Huff Model Engine — Azure SQL Version
 
-Estimates predicted visits to a hypothetical new retail location using the
-Huff Gravity Model.
+This version preserves the required run_huff_model(...) function signature,
+but queries Azure SQL instead of opening the local SQLite database.
 
-Given a candidate store's location, NAICS category, and floor area, the model:
-1. Finds existing competing POIs in the same NAICS category.
-2. Computes attractiveness of existing competitors.
-3. Computes attractiveness of the proposed candidate store.
-4. Estimates the probability that consumers from each CBG visit the candidate.
-5. Aggregates predicted visits across Worcester CBGs.
-
-Spatial reference:
-- Candidate input coordinates are expected in WGS84 (EPSG:4326).
-- CBG geometries are projected to UTM Zone 19N (EPSG:26919) for distance calculations in meters.
-
-Study area:
-- Worcester, MA
-
-Important:
-- Teams may replace the internals of this file.
-- However, they should keep the run_huff_model(...) function signature and return structure.
+Required signature:
+run_huff_model(candidate_lat, candidate_lon, business_category, floor_area, db_connection=None)
 """
 
 import math
-import sqlite3
 import time
-from pathlib import Path
 
 from pyproj import Transformer
+from db import get_connection as get_azure_connection
 
-# --------------------------------------------------------------------- Configuration ---------------------------------------------------------------------
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "Data" / "urban_ai_v2.db"
 
 # WGS84 latitude/longitude -> UTM Zone 19N, meters
-# This matches the projection used when building the database.
+# This matches the projection used when building the original SQLite database.
 TRANSFORMER = Transformer.from_crs("EPSG:4326", "EPSG:26919", always_xy=True)
 
 
+# ---------------------------------------------------------------------
+# Row 
+# ---------------------------------------------------------------------
 
-# --------------------------------------------------------------------- Database helpers ---------------------------------------------------------------------
+def row_value(row, index, default=None):
+    """
+    Safely read pyodbc.Row values by index.
+    pyodbc rows are not the same as sqlite3.Row, so we avoid row["column_name"].
+    """
+    try:
+        value = row[index]
+        return default if value is None else value
+    except Exception:
+        return default
 
 
-def get_connection(db_connection=None):
+# ---------------------------------------------------------------------
+# Database 
+# ---------------------------------------------------------------------
+
+def open_model_connection(db_connection=None):
     """
     Use an existing database connection if provided.
-    Otherwise, open the local SQLite database from Data/urban_ai_v2.db.
+    Otherwise, open Azure SQL connection through db.py.
+
+    db.py is responsible for reading SQL_CONNECTION_STRING from Azure App Service.
     """
     if db_connection is not None:
-        db_connection.row_factory = sqlite3.Row
         return db_connection, False
 
-    if not DB_PATH.exists():
-        raise FileNotFoundError(
-            f"SQLite database not found at {DB_PATH}. "
-            "Make sure Data/urban_ai_v2.db exists in the repository."
-        )
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_azure_connection()
     return conn, True
 
+
+# ---------------------------------------------------------------------
+# NAICS / parameter
+# ---------------------------------------------------------------------
 
 def resolve_naics(cursor, business_category):
     """
     Resolve user input into a NAICS code.
 
     The UI may pass:
-    - an exact NAICS code, such as 445310
-    - a top_category name
-    - sometimes a shorter NAICS prefix, such as 4441
+    - exact NAICS code, e.g. 445310
+    - top_category name
+    - shorter NAICS prefix, e.g. 4441
 
-    The function tries exact NAICS first, then category name, then NAICS prefix.
+    This uses Azure SQL / T-SQL syntax.
     """
     user_input = str(business_category).strip()
 
     if not user_input:
         raise ValueError("Business category / NAICS code cannot be empty.")
 
-    # 1. Exact NAICS match in calibrated_parameters
-    row = cursor.execute(
+    # 1. Exact NAICS match
+    cursor.execute(
         """
-        SELECT naics_code, top_category
-        FROM calibrated_parameters
-        WHERE naics_code = ?
+        SELECT [naics_code], [top_category]
+        FROM dbo.[calibrated_parameters]
+        WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
         """,
-        (user_input,)
-    ).fetchone()
+        user_input
+    )
+    row = cursor.fetchone()
 
     if row:
-        return str(row["naics_code"]), row["top_category"]
+        return str(row_value(row, 0)), row_value(row, 1)
 
     # 2. Exact top_category match
-    row = cursor.execute(
+    cursor.execute(
         """
-        SELECT naics_code, top_category
-        FROM calibrated_parameters
-        WHERE LOWER(top_category) = LOWER(?)
-        ORDER BY naics_code
-        LIMIT 1
+        SELECT TOP 1 [naics_code], [top_category]
+        FROM dbo.[calibrated_parameters]
+        WHERE LOWER([top_category]) = LOWER(?)
+        ORDER BY [naics_code]
         """,
-        (user_input,)
-    ).fetchone()
+        user_input
+    )
+    row = cursor.fetchone()
 
     if row:
-        return str(row["naics_code"]), row["top_category"]
+        return str(row_value(row, 0)), row_value(row, 1)
 
-    # 3. NAICS prefix match, useful if UI sends 4-digit category code
+    # 3. NAICS prefix match
     if user_input.isdigit():
-        row = cursor.execute(
+        cursor.execute(
             """
-            SELECT naics_code, top_category
-            FROM calibrated_parameters
-            WHERE naics_code LIKE ?
-            ORDER BY naics_code
-            LIMIT 1
+            SELECT TOP 1 [naics_code], [top_category]
+            FROM dbo.[calibrated_parameters]
+            WHERE CAST([naics_code] AS NVARCHAR(50)) LIKE ?
+            ORDER BY [naics_code]
             """,
-            (user_input + "%",)
-        ).fetchone()
+            user_input + "%"
+        )
+        row = cursor.fetchone()
 
         if row:
-            return str(row["naics_code"]), row["top_category"]
+            return str(row_value(row, 0)), row_value(row, 1)
 
     raise ValueError(
         f"No calibrated NAICS category found for input: {business_category}. "
@@ -134,50 +129,59 @@ def get_parameters(cursor, naics_code):
     """
     Fetch calibrated alpha and beta parameters for the selected NAICS code.
     """
-    row = cursor.execute(
+    cursor.execute(
         """
-        SELECT alpha, beta, top_category
-        FROM calibrated_parameters
-        WHERE naics_code = ?
+        SELECT [alpha], [beta], [top_category]
+        FROM dbo.[calibrated_parameters]
+        WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
         """,
-        (str(naics_code),)
-    ).fetchone()
+        str(naics_code)
+    )
+    row = cursor.fetchone()
 
     if row is None:
         raise ValueError(
             f"No calibrated alpha/beta parameters found for NAICS code {naics_code}."
         )
 
-    return float(row["alpha"]), float(row["beta"]), row["top_category"]
+    alpha = float(row_value(row, 0))
+    beta = float(row_value(row, 1))
+    top_category = row_value(row, 2)
+
+    return alpha, beta, top_category
 
 
 def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alpha, beta, limit=20):
     """
     Return a lightweight competitor sample for frontend map/table display.
     """
-    rows = cursor.execute(
-        """
-        SELECT
-            placekey,
-            location_name,
-            latitude,
-            longitude,
-            wkt_area_sq_meters
-        FROM pois
-        WHERE naics_code = ?
-          AND latitude IS NOT NULL
-          AND longitude IS NOT NULL
-        LIMIT ?
+    safe_limit = max(1, min(int(limit), 100))
+
+    cursor.execute(
+        f"""
+        SELECT TOP {safe_limit}
+            [placekey],
+            [location_name],
+            [latitude],
+            [longitude],
+            [wkt_area_sq_meters]
+        FROM dbo.[pois]
+        WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
+          AND [latitude] IS NOT NULL
+          AND [longitude] IS NOT NULL
         """,
-        (str(naics_code), int(limit))
-    ).fetchall()
+        str(naics_code)
+    )
+    rows = cursor.fetchall()
 
     competitors = []
 
     for row in rows:
-        lat = safe_float(row["latitude"])
-        lon = safe_float(row["longitude"])
-        size = safe_float(row["wkt_area_sq_meters"])
+        placekey = row_value(row, 0, "")
+        location_name = row_value(row, 1, "Unknown")
+        lat = safe_float(row_value(row, 2))
+        lon = safe_float(row_value(row, 3))
+        size = safe_float(row_value(row, 4))
 
         distance_miles = None
         attraction = None
@@ -186,13 +190,12 @@ def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alph
             distance_miles = haversine_miles(candidate_lat, candidate_lon, lat, lon)
 
         if size is not None and distance_miles is not None:
-            # Convert miles back to meters for attraction proxy.
             distance_m = max(distance_miles * 1609.344, 100.0)
             attraction = (size ** alpha) / (distance_m ** beta)
 
         competitors.append({
-            "name": str(row["location_name"] or "Unknown"),
-            "placekey": str(row["placekey"] or ""),
+            "name": str(location_name or "Unknown"),
+            "placekey": str(placekey or ""),
             "lat": lat,
             "lon": lon,
             "size": size,
@@ -203,9 +206,9 @@ def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alph
     return competitors
 
 
-
-# --------------------------------------------------------------------- Core Huff computation ---------------------------------------------------------------------
-
+# ---------------------------------------------------------------------
+# Huff computation
+# ---------------------------------------------------------------------
 
 def run_huff_model(
     candidate_lat,
@@ -230,13 +233,14 @@ def run_huff_model(
     floor_area : float
         Candidate store floor area in square meters.
     db_connection : optional
-        Optional existing database connection.
+        Optional existing Azure SQL database connection.
 
     Returns
     -------
     dict
         Structured result used by the dashboard and chatbot.
     """
+
     start_time = time.perf_counter()
 
     candidate_lat = float(candidate_lat)
@@ -252,7 +256,7 @@ def run_huff_model(
     if floor_area <= 0:
         raise ValueError("floor_area must be greater than zero.")
 
-    conn, should_close = get_connection(db_connection)
+    conn, should_close = open_model_connection(db_connection)
     cursor = conn.cursor()
 
     try:
@@ -265,25 +269,27 @@ def run_huff_model(
         new_x, new_y = TRANSFORMER.transform(candidate_lon, candidate_lat)
 
         # Fetch all CBG centroids with projected coordinates.
-        cbg_rows = cursor.execute(
+        cursor.execute(
             """
-            SELECT GEOID10, proj_x, proj_y
-            FROM cbg_master
+            SELECT [GEOID10], [proj_x], [proj_y]
+            FROM dbo.[cbg_master]
             """
-        ).fetchall()
+        )
+        cbg_rows = cursor.fetchall()
 
         if not cbg_rows:
             raise ValueError("No CBG records found in cbg_master table.")
 
         # Existing competitor utility, precomputed by CBG and NAICS.
-        utility_rows = cursor.execute(
+        cursor.execute(
             """
-            SELECT GEOID10, total_existing_utility
-            FROM Competitor_Summary
-            WHERE naics_code = ?
+            SELECT [GEOID10], [total_existing_utility]
+            FROM dbo.[Competitor_Summary]
+            WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
             """,
-            (str(naics_code),)
-        ).fetchall()
+            str(naics_code)
+        )
+        utility_rows = cursor.fetchall()
 
         if not utility_rows:
             raise ValueError(
@@ -291,19 +297,20 @@ def run_huff_model(
             )
 
         existing_utility_map = {
-            str(row["GEOID10"]): float(row["total_existing_utility"] or 0.0)
+            str(row_value(row, 0)): float(row_value(row, 1, 0.0) or 0.0)
             for row in utility_rows
         }
 
         # Category demand, precomputed by CBG and NAICS.
-        demand_rows = cursor.execute(
+        cursor.execute(
             """
-            SELECT GEOID10, total_demand
-            FROM precomputed_demand
-            WHERE naics_code = ?
+            SELECT [GEOID10], [total_demand]
+            FROM dbo.[precomputed_demand]
+            WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
             """,
-            (str(naics_code),)
-        ).fetchall()
+            str(naics_code)
+        )
+        demand_rows = cursor.fetchall()
 
         if not demand_rows:
             raise ValueError(
@@ -311,21 +318,21 @@ def run_huff_model(
             )
 
         demand_map = {
-            str(row["GEOID10"]): float(row["total_demand"] or 0.0)
+            str(row_value(row, 0)): float(row_value(row, 1, 0.0) or 0.0)
             for row in demand_rows
         }
 
         # Count competitors in this NAICS category.
-        competitor_count_row = cursor.execute(
+        cursor.execute(
             """
-            SELECT COUNT(*) AS cnt
-            FROM pois
-            WHERE naics_code = ?
+            SELECT COUNT(*) AS [cnt]
+            FROM dbo.[pois]
+            WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
             """,
-            (str(naics_code),)
-        ).fetchone()
-
-        num_competitors = int(competitor_count_row["cnt"] or 0)
+            str(naics_code)
+        )
+        competitor_count_row = cursor.fetchone()
+        num_competitors = int(row_value(competitor_count_row, 0, 0) or 0)
 
         if num_competitors == 0:
             raise ValueError(f"No competing POIs found for NAICS code {naics_code}.")
@@ -335,16 +342,22 @@ def run_huff_model(
         total_demand_sum = 0.0
 
         for row in cbg_rows:
-            geoid = str(row["GEOID10"])
+            geoid = str(row_value(row, 0))
+            proj_x = safe_float(row_value(row, 1))
+            proj_y = safe_float(row_value(row, 2))
+
+            if proj_x is None or proj_y is None:
+                continue
 
             demand = demand_map.get(geoid, 0.0)
+
             if demand <= 0:
                 continue
 
             existing_utility = existing_utility_map.get(geoid, 0.0)
 
-            dx = float(row["proj_x"]) - new_x
-            dy = float(row["proj_y"]) - new_y
+            dx = proj_x - new_x
+            dy = proj_y - new_y
             distance_m = math.sqrt(dx * dx + dy * dy)
 
             # Avoid division instability if candidate is extremely close to a centroid.
@@ -386,11 +399,11 @@ def run_huff_model(
             "runtime_ms": runtime_ms,
             "notes": (
                 "Team 4 V3 Huff model completed successfully. "
-                "This version reads from the local SQLite database at Data/urban_ai_v2.db "
-                "instead of loading CSV or GeoJSON files. "
+                "This version reads from Azure SQL instead of the local SQLite database. "
                 "It uses precomputed CBG coordinates, competitor utility, and category demand "
                 "to improve integration and runtime efficiency."
             ),
+            "data_source": "Azure SQL",
             "inputs": {
                 "candidate_lat": candidate_lat,
                 "candidate_lon": candidate_lon,
@@ -409,8 +422,10 @@ def run_huff_model(
         if should_close:
             conn.close()
 
-# --------------------------------------------------------------------- Utility helpers ---------------------------------------------------------------------
 
+# ---------------------------------------------------------------------
+# Utility 
+# ---------------------------------------------------------------------
 
 def safe_float(value):
     try:
@@ -443,11 +458,15 @@ def haversine_miles(lat1, lon1, lat2, lon2):
     return radius_miles * c
 
 
-# Local quick test:
-# result = run_huff_model(
-#     candidate_lat=42.27,
-#     candidate_lon=-71.80,
-#     business_category=445310,
-#     floor_area=2500,
-# )
-# print(result)
+
+
+
+
+
+
+
+
+
+
+
+
