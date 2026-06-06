@@ -20,17 +20,24 @@ header h1 {
   font-size: 24px;
 }
 
+header h2 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
 header p {
   margin: 0;
   color: #d1d5db;
 }
 
+/* Main dashboard layout */
 .layout {
   display: grid;
   grid-template-columns: 420px 1fr;
-  grid-template-rows: minmax(520px, 62vh) auto;
+  grid-template-rows: auto auto;
   gap: 16px;
   padding: 16px;
+  align-items: start;
 }
 
 .panel {
@@ -40,19 +47,30 @@ header p {
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
 }
 
+/* Left chatbot panel spans both rows */
 .chat-panel {
+  grid-column: 1;
   grid-row: 1 / span 2;
   display: flex;
   flex-direction: column;
-  min-height: 680px;
+  height: calc(100vh - 130px);
+  min-height: 620px;
+  max-height: 900px;
 }
 
+/* Right top map panel */
 .map-panel {
-  min-height: 520px;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  min-height: auto;
 }
 
+/* Right bottom result panel */
 .result-panel {
   grid-column: 2;
+  grid-row: 2;
+  align-self: start;
 }
 
 h2 {
@@ -66,14 +84,14 @@ h3 {
 }
 
 #map {
-  height: 455px;
+  height: 320px;
   width: 100%;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
 }
 
 .selected-location {
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 14px;
   color: #374151;
 }
@@ -179,44 +197,20 @@ th {
   }
 
   .chat-panel,
+  .map-panel,
   .result-panel {
     grid-column: 1;
     grid-row: auto;
   }
 
   .chat-panel {
+    height: auto;
     min-height: 520px;
+  }
+
+  #map {
+    height: 300px;
   }
 }
 
 
-
-
-
-
-
-
-
-
-/* Module 8 UI improvement: reduce unused blank space below the map */
-.layout {
-  align-items: start;
-}
-
-.map-panel {
-  align-self: start;
-  min-height: auto;
-}
-
-#map {
-  height: 320px;
-}
-
-.selected-location {
-  margin-top: 8px;
-  font-size: 0.95rem;
-}
-
-.result-panel {
-  align-self: start;
-}
