@@ -20,15 +20,27 @@
     <section class="panel chat-panel">
       <h2>Guided Chatbot</h2>
 
+      <div class="hint">
+        <strong>Input guide:</strong><br>
+        1. Enter a store type or NAICS code, such as <strong>liquor store</strong> or <strong>445310</strong>.<br>
+        2. Enter latitude and longitude separately, or click the map to choose a location.<br>
+        3. Enter floor area in square meters, such as <strong>2500</strong>.
+      </div>
+
       <div id="chatMessages" class="chat-messages"></div>
 
       <div class="input-row">
-        <input id="chatInput" type="text" placeholder="Type your answer or question..." />
+        <input
+          id="chatInput"
+          type="text"
+          maxlength="100"
+          placeholder="Type your answer, e.g., liquor store, 42.27, -71.80, or 2500"
+        />
         <button id="sendBtn">Send</button>
       </div>
 
       <div class="hint">
-        Tip: click the map to choose the proposed store location.
+        Tip: click the map to choose the proposed store location. You can also type the latitude and longitude manually.
       </div>
     </section>
 
