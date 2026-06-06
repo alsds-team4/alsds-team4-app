@@ -60,24 +60,38 @@ def open_model_connection(db_connection=None):
 
 def resolve_naics(cursor, business_category):
     """
-    Resolve user input into a NAICS code.
+    Resolve user input into a calibrated NAICS code using Azure SQL.
 
-    The UI may pass:
-    - exact NAICS code, e.g. 445310
-    - top_category name
-    - shorter NAICS prefix, e.g. 4441
+    Supported input examples:
+    - Exact NAICS code: "445310"
+    - NAICS prefix: "445"
+    - Store category: "liquor store", "grocery store", "restaurant"
+    - Top category / sub category text from POI data
+    - Some business names from pois.location_name
 
-    This uses Azure SQL / T-SQL syntax.
+    Important:
+    The resolved NAICS must exist in calibrated_parameters, because the Huff model
+    needs alpha, beta, precomputed competitor utility, and precomputed demand.
     """
+
     user_input = str(business_category).strip()
 
     if not user_input:
-        raise ValueError("Business category / NAICS code cannot be empty.")
+        raise ValueError(
+            "Business category / NAICS code cannot be empty. "
+            "Try a store type such as 'liquor store' or a NAICS code such as 445310."
+        )
 
-    # 1. Exact NAICS match
+    normalized = " ".join(user_input.lower().split())
+
+    # ------------------------------------------------------------
+    # 1. Exact NAICS match in calibrated_parameters
+    # ------------------------------------------------------------
     cursor.execute(
         """
-        SELECT [naics_code], [top_category]
+        SELECT TOP 1
+            CAST([naics_code] AS NVARCHAR(50)) AS [naics_code],
+            [top_category]
         FROM dbo.[calibrated_parameters]
         WHERE CAST([naics_code] AS NVARCHAR(50)) = ?
         """,
@@ -88,10 +102,14 @@ def resolve_naics(cursor, business_category):
     if row:
         return str(row_value(row, 0)), row_value(row, 1)
 
-    # 2. Exact top_category match
+    # ------------------------------------------------------------
+    # 2. Exact top_category match in calibrated_parameters
+    # ------------------------------------------------------------
     cursor.execute(
         """
-        SELECT TOP 1 [naics_code], [top_category]
+        SELECT TOP 1
+            CAST([naics_code] AS NVARCHAR(50)) AS [naics_code],
+            [top_category]
         FROM dbo.[calibrated_parameters]
         WHERE LOWER([top_category]) = LOWER(?)
         ORDER BY [naics_code]
@@ -103,11 +121,16 @@ def resolve_naics(cursor, business_category):
     if row:
         return str(row_value(row, 0)), row_value(row, 1)
 
-    # 3. NAICS prefix match
+    # ------------------------------------------------------------
+    # 3. NAICS prefix match in calibrated_parameters
+    # Example: user enters "445" or "4453"
+    # ------------------------------------------------------------
     if user_input.isdigit():
         cursor.execute(
             """
-            SELECT TOP 1 [naics_code], [top_category]
+            SELECT TOP 1
+                CAST([naics_code] AS NVARCHAR(50)) AS [naics_code],
+                [top_category]
             FROM dbo.[calibrated_parameters]
             WHERE CAST([naics_code] AS NVARCHAR(50)) LIKE ?
             ORDER BY [naics_code]
@@ -119,9 +142,71 @@ def resolve_naics(cursor, business_category):
         if row:
             return str(row_value(row, 0)), row_value(row, 1)
 
+    # ------------------------------------------------------------
+    # 4. Fuzzy category / store-name lookup from Azure SQL pois table
+    # Only return NAICS codes that also exist in calibrated_parameters.
+    # ------------------------------------------------------------
+
+    stop_words = {
+        "store", "stores", "shop", "shops", "the", "a", "an",
+        "and", "&", "of", "for", "near", "nearby"
+    }
+
+    tokens = [
+        token.strip()
+        for token in normalized.replace(",", " ").replace("/", " ").split()
+        if len(token.strip()) >= 3 and token.strip() not in stop_words
+    ]
+
+    # Include full phrase first, then useful tokens.
+    search_terms = [normalized]
+    for token in tokens:
+        if token not in search_terms:
+            search_terms.append(token)
+
+    # Limit terms to avoid making the query too large.
+    search_terms = search_terms[:5]
+
+    conditions = []
+    params = []
+
+    for term in search_terms:
+        pattern = f"%{term}%"
+
+        conditions.append("LOWER(p.[top_category]) LIKE ?")
+        params.append(pattern)
+
+        conditions.append("LOWER(p.[sub_category]) LIKE ?")
+        params.append(pattern)
+
+        conditions.append("LOWER(p.[location_name]) LIKE ?")
+        params.append(pattern)
+
+    where_clause = " OR ".join(conditions)
+
+    query = f"""
+        SELECT TOP 1
+            CAST(p.[naics_code] AS NVARCHAR(50)) AS [naics_code],
+            MAX(cp.[top_category]) AS [top_category],
+            COUNT(*) AS [match_count]
+        FROM dbo.[pois] p
+        INNER JOIN dbo.[calibrated_parameters] cp
+            ON CAST(p.[naics_code] AS NVARCHAR(50)) = CAST(cp.[naics_code] AS NVARCHAR(50))
+        WHERE {where_clause}
+        GROUP BY CAST(p.[naics_code] AS NVARCHAR(50))
+        ORDER BY COUNT(*) DESC
+    """
+
+    cursor.execute(query, *params)
+    row = cursor.fetchone()
+
+    if row:
+        return str(row_value(row, 0)), row_value(row, 1)
+
     raise ValueError(
         f"No calibrated NAICS category found for input: {business_category}. "
-        "Try an exact NAICS code or a valid top category from the database."
+        "Try a supported store type such as 'liquor store', 'grocery store', "
+        "or an exact NAICS code such as 445310."
     )
 
 
