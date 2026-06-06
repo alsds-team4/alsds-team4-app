@@ -1,4 +1,4 @@
-const chatMessages = document.getElementById("chatMessages");
+  const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
 
@@ -54,15 +54,12 @@ async function handleSend() {
 
   try {
     const lowerText = text.toLowerCase();
-
-    if (lowerText === "new scenario" || lowerText === "restart" || lowerText === "start over") {
-      resetScenario();
-      addBotMessage(
-        "Sure. Let's start a new scenario. Enter a store type or NAICS code. For example: liquor store or 445310."
-      );
+      
+  if (lowerText === "new scenario" || lowerText === "restart" || lowerText === "start over") {
+         restartChat();
       return;
-    }
-
+      }
+  
     /*
       Supported rerun example:
       "use 42.229212, -71.805525 and rerun the model for liquor store and area of 1000 square meters"
@@ -561,6 +558,31 @@ function resetScenario() {
     tableWrap.innerHTML = "";
   }
 }
+
+
+
+function restartChat() {
+  resetScenario();
+
+  // Clear chatbot messages
+  if (chatMessages) {
+    chatMessages.innerHTML = "";
+  }
+
+  // Clear input box
+  if (chatInput) {
+    chatInput.value = "";
+  }
+
+  // Start the guided workflow again
+  addBotMessage(
+    "Welcome. I will guide you through a new store-location scenario for Worcester, MA. " +
+    "First, enter a store type or NAICS code. For example: liquor store or 445310."
+  );
+}
+
+
+
 
 function addBotMessage(text) {
   addMessage(text, "bot");
