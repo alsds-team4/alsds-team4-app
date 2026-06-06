@@ -188,3 +188,35 @@ th {
     min-height: 520px;
   }
 }
+
+
+
+
+
+
+
+
+
+
+/* Module 8 UI improvement: reduce unused blank space below the map */
+.layout {
+  align-items: start;
+}
+
+.map-panel {
+  align-self: start;
+  min-height: auto;
+}
+
+#map {
+  height: 320px;
+}
+
+.selected-location {
+  margin-top: 8px;
+  font-size: 0.95rem;
+}
+
+.result-panel {
+  align-self: start;
+}
