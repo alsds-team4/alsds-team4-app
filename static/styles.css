@@ -486,3 +486,112 @@ th {
     height: 300px;
   }
 }
+
+
+.category-help-btn {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-box {
+  background: white;
+  width: min(820px, 95vw);
+  max-height: 82vh;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.modal-header h2 {
+  margin: 0 0 6px 0;
+  font-size: 20px;
+}
+
+.modal-header p {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.modal-close-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.modal-close-btn:hover {
+  background: #e5e7eb;
+}
+
+.modal-search-input {
+  margin: 14px 20px 10px;
+  padding: 11px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.modal-status {
+  padding: 0 20px 10px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.modal-table-wrap {
+  overflow: auto;
+  padding: 0 20px 20px;
+}
+
+.use-category-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: #2563eb;
+}
+
+.use-category-btn:hover {
+  background: #1d4ed8;
+}
+
+.category-code {
+  font-family: "Courier New", monospace;
+  font-weight: 700;
+  color: #111827;
+}
+
+.category-empty-row {
+  text-align: center;
+  color: #6b7280;
+  padding: 18px;
+}
+
+
