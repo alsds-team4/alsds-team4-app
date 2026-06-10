@@ -16,11 +16,30 @@
     <p>Worcester, MA | Huff Model Prototype</p>
   </header>
 
+  <div class="workflow-bar">
+    <div class="workflow-step active" id="step-1">
+      <span class="step-number">1</span>
+      <span class="step-label">Business Type</span>
+    </div>
+    <div class="workflow-step" id="step-2">
+      <span class="step-number">2</span>
+      <span class="step-label">Location Input</span>
+    </div>
+    <div class="workflow-step" id="step-3">
+      <span class="step-number">3</span>
+      <span class="step-label">Model Result</span>
+    </div>
+    <div class="workflow-step" id="step-4">
+      <span class="step-number">4</span>
+      <span class="step-label">Compare Scenarios</span>
+    </div>
+  </div>
+
   <main class="layout">
     <section class="panel chat-panel">
-      <h2>Guided Chatbot</h2>
+      <h2>Guided Chatbot <span id="chatStepBadge" class="small-badge">Step 1</span></h2>
 
-      <div class="hint">
+      <div class="hint input-guide">
         <strong>Input guide:</strong><br>
         1. Enter a store type or NAICS code, such as <strong>liquor store</strong> or <strong>445310</strong>.<br>
         2. Enter latitude and longitude separately, or click the map to choose a location.<br>
@@ -33,20 +52,40 @@
         <input
           id="chatInput"
           type="text"
-          maxlength="100"
-          placeholder="Type your answer, e.g., liquor store, 42.27, -71.80, or 2500"
+          maxlength="120"
+          placeholder="Type your answer or question..."
         />
         <button id="sendBtn">Send</button>
       </div>
 
       <div class="hint">
-        Tip: click the map to choose the proposed store location. You can also type the latitude and longitude manually.
+        Tip: type <strong>new scenario</strong> to clear the chatbot and evaluate another location.
       </div>
     </section>
 
     <section class="panel map-panel">
       <h2>Map</h2>
-      <div id="map"></div>
+
+      <div class="map-wrap">
+        <div id="map"></div>
+
+        <div class="map-legend">
+          <h3>Map Legend</h3>
+          <div class="legend-item">
+            <span class="legend-dot proposed-dot"></span>
+            Proposed Store Location
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot competitor-dot"></span>
+            Nearby Competitors
+          </div>
+          <div class="legend-item">
+            <span class="legend-box tract-box"></span>
+            Census / Trade Area Context
+          </div>
+        </div>
+      </div>
+
       <div id="selectedLocation" class="selected-location">
         No candidate location selected yet.
       </div>
@@ -62,6 +101,49 @@
       <h3>Nearby Competitors / Attraction Scores</h3>
       <div id="competitorTable" class="table-wrap"></div>
     </section>
+
+    <section class="panel scenario-panel">
+      <div class="scenario-header">
+        <h2>Saved Scenarios</h2>
+        <span id="scenarioCount" class="small-badge">0 saved</span>
+      </div>
+
+      <div class="hint">
+        Save model results here to compare different locations or floor-area choices.
+      </div>
+
+      <button id="saveScenarioBtn" class="secondary-btn" style="display:none;">
+        Save This Location
+      </button>
+
+      <button id="clearScenariosBtn" class="light-btn" style="display:none;">
+        Clear Saved Scenarios
+      </button>
+
+      <div id="scenarioList" class="scenario-list">
+        <div class="scenario-empty">
+          No scenarios saved yet. Run the model and save a location to compare results.
+        </div>
+      </div>
+
+      <div id="comparisonPanel" class="comparison-panel" style="display:none;">
+        <h3>Side-by-Side Comparison</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Store Type</th>
+                <th>Visits</th>
+                <th>Market Share</th>
+                <th>Competitors</th>
+              </tr>
+            </thead>
+            <tbody id="comparisonTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -69,3 +151,4 @@
   <script src="/static/chat.js"></script>
 </body>
 </html>
+
