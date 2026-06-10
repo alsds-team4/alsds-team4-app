@@ -4,6 +4,17 @@ const sendBtn = document.getElementById("sendBtn");
 const saveScenarioBtn = document.getElementById("saveScenarioBtn");
 const clearScenariosBtn = document.getElementById("clearScenariosBtn");
 
+const openCategoryPopupBtn = document.getElementById("openCategoryPopupBtn");
+const closeCategoryPopupBtn = document.getElementById("closeCategoryPopupBtn");
+const categoryModal = document.getElementById("categoryModal");
+const categorySearchInput = document.getElementById("categorySearchInput");
+const categoryTableBody = document.getElementById("categoryTableBody");
+const categoryLoadingText = document.getElementById("categoryLoadingText");
+
+let categoryCache = [];
+let categoryLoaded = false;
+
+
 const state = {
   step: "category",
   business_category: null,
@@ -46,6 +57,45 @@ if (saveScenarioBtn) {
 if (clearScenariosBtn) {
   clearScenariosBtn.addEventListener("click", clearSavedScenarios);
 }
+
+if (openCategoryPopupBtn) {
+  openCategoryPopupBtn.addEventListener("click", openCategoryPopup);
+}
+
+if (closeCategoryPopupBtn) {
+  closeCategoryPopupBtn.addEventListener("click", closeCategoryPopup);
+}
+
+if (categoryModal) {
+  categoryModal.addEventListener("click", function (event) {
+    if (event.target === categoryModal) {
+      closeCategoryPopup();
+    }
+  });
+}
+
+if (categorySearchInput) {
+  categorySearchInput.addEventListener("input", function () {
+    renderCategoryTable(categorySearchInput.value);
+  });
+}
+
+if (categoryTableBody) {
+  categoryTableBody.addEventListener("click", function (event) {
+    const button = event.target.closest(".use-category-btn");
+
+    if (!button) {
+      return;
+    }
+
+    const naicsCode = button.dataset.naicsCode;
+    const storeType = button.dataset.storeType;
+
+    useCategoryFromPopup(naicsCode, storeType);
+  });
+}
+
+
 
 window.onMapLocationSelected = function (location) {
   state.candidate_lat = location.lat;
@@ -826,6 +876,165 @@ function restartChat() {
     "First, enter a store type or NAICS code. For example: liquor store or 445310."
   );
 }
+
+
+async function openCategoryPopup() {
+  if (!categoryModal) {
+    return;
+  }
+
+  categoryModal.style.display = "flex";
+
+  if (categorySearchInput) {
+    categorySearchInput.value = "";
+  }
+
+  if (!categoryLoaded) {
+    await loadCategoriesFromAzure();
+  } else {
+    renderCategoryTable("");
+  }
+
+  if (categorySearchInput) {
+    categorySearchInput.focus();
+  }
+}
+
+function closeCategoryPopup() {
+  if (!categoryModal) {
+    return;
+  }
+
+  categoryModal.style.display = "none";
+}
+
+async function loadCategoriesFromAzure() {
+  if (categoryLoadingText) {
+    categoryLoadingText.textContent = "Loading categories from Azure SQL...";
+  }
+
+  if (categoryTableBody) {
+    categoryTableBody.innerHTML = "";
+  }
+
+  try {
+    const response = await fetch("/api/categories");
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "Could not load categories.");
+    }
+
+    categoryCache = Array.isArray(data.categories) ? data.categories : [];
+    categoryLoaded = true;
+
+    if (categoryLoadingText) {
+      categoryLoadingText.textContent = `${categoryCache.length} supported categories loaded from Azure SQL.`;
+    }
+
+    renderCategoryTable("");
+
+  } catch (error) {
+    if (categoryLoadingText) {
+      categoryLoadingText.textContent = `Failed to load categories: ${error.message}`;
+    }
+
+    if (categoryTableBody) {
+      categoryTableBody.innerHTML = `
+        <tr>
+          <td colspan="3" class="category-empty-row">
+            Could not load categories from Azure SQL.
+          </td>
+        </tr>
+      `;
+    }
+  }
+}
+
+function renderCategoryTable(filterText) {
+  if (!categoryTableBody) {
+    return;
+  }
+
+  const filter = String(filterText || "").trim().toLowerCase();
+
+  const filtered = categoryCache.filter((item) => {
+    const storeType = String(item.store_type || "").toLowerCase();
+    const naicsCode = String(item.naics_code || "").toLowerCase();
+
+    return (
+      !filter ||
+      storeType.includes(filter) ||
+      naicsCode.includes(filter)
+    );
+  });
+
+  if (filtered.length === 0) {
+    categoryTableBody.innerHTML = `
+      <tr>
+        <td colspan="3" class="category-empty-row">
+          No matching store type or NAICS code found.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  categoryTableBody.innerHTML = filtered.map((item) => {
+    const storeType = escapeHtml(item.store_type || "Unknown");
+    const naicsCode = escapeHtml(item.naics_code || "");
+
+    return `
+      <tr>
+        <td>${storeType}</td>
+        <td><span class="category-code">${naicsCode}</span></td>
+        <td>
+          <button
+            type="button"
+            class="use-category-btn"
+            data-naics-code="${naicsCode}"
+            data-store-type="${storeType}"
+          >
+            Use
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function useCategoryFromPopup(naicsCode, storeType) {
+  closeCategoryPopup();
+
+  if (!naicsCode) {
+    addBotMessage("This category does not have a valid NAICS code.");
+    return;
+  }
+
+  if (state.step !== "category") {
+    addBotMessage(
+      `Selected category: ${storeType} (${naicsCode}). Type "new scenario" first if you want to use it for a new model run.`
+    );
+    return;
+  }
+
+  state.business_category = naicsCode;
+  state.display_category = `${storeType} (${naicsCode})`;
+  state.step = "latitude";
+  state.current_result_saved = false;
+
+  updateWorkflowStep(2);
+  showSaveButton(false);
+
+  addUserMessage(`${storeType} (${naicsCode})`);
+
+  addBotMessage(
+    `Good. I will use "${storeType}" with NAICS code ${naicsCode}. ` +
+    "Now enter the proposed store latitude as a number. For example: 42.27. " +
+    "You can also click the map to select a location."
+  );
+}
+
 
 function formatMarketShare(value) {
   const number = Number(value);
