@@ -46,6 +46,10 @@
         3. Enter floor area in square meters, such as <strong>2500</strong>.
       </div>
 
+      <button id="openCategoryPopupBtn" type="button" class="light-btn category-help-btn">
+      View supported store types / NAICS codes
+      </button>
+
       <div id="chatMessages" class="chat-messages"></div>
 
       <div class="input-row">
@@ -146,6 +150,50 @@
     </section>
   </main>
 
+
+
+
+
+  <div id="categoryModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <h2>Supported Store Types</h2>
+        <p>
+          These store types are loaded from Azure SQL and represent categories supported by the Huff Model.
+        </p>
+      </div>
+      <button id="closeCategoryPopupBtn" type="button" class="modal-close-btn">×</button>
+    </div>
+
+    <input
+      id="categorySearchInput"
+      class="modal-search-input"
+      type="text"
+      placeholder="Search store type or NAICS code, e.g., grocery or 445310"
+    />
+
+    <div id="categoryLoadingText" class="modal-status">
+      Loading categories from Azure SQL...
+    </div>
+
+    <div class="modal-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Store Type</th>
+            <th>NAICS Code</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="categoryTableBody"></tbody>
+        </table>
+       </div>
+     </div>
+   </div>
+
+
+  
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/map.js"></script>
   <script src="/static/chat.js"></script>
