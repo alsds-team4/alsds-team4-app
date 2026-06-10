@@ -1,6 +1,8 @@
-  const chatMessages = document.getElementById("chatMessages");
+const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
+const saveScenarioBtn = document.getElementById("saveScenarioBtn");
+const clearScenariosBtn = document.getElementById("clearScenariosBtn");
 
 const state = {
   step: "category",
@@ -9,7 +11,9 @@ const state = {
   candidate_lat: null,
   candidate_lon: null,
   floor_area: null,
-  last_result: null
+  last_result: null,
+  current_result_saved: false,
+  saved_scenarios: []
 };
 
 const LIMITS = {
@@ -17,6 +21,10 @@ const LIMITS = {
   minFloorArea: 10,
   maxFloorArea: 500000
 };
+
+loadSavedScenarios();
+updateWorkflowStep(1);
+renderSavedScenarios();
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
@@ -31,6 +39,14 @@ chatInput.addEventListener("keydown", function (event) {
   }
 });
 
+if (saveScenarioBtn) {
+  saveScenarioBtn.addEventListener("click", saveCurrentScenario);
+}
+
+if (clearScenariosBtn) {
+  clearScenariosBtn.addEventListener("click", clearSavedScenarios);
+}
+
 window.onMapLocationSelected = function (location) {
   state.candidate_lat = location.lat;
   state.candidate_lon = location.lon;
@@ -41,7 +57,9 @@ window.onMapLocationSelected = function (location) {
       `${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}. ` +
       "Now enter the proposed store floor area in square meters. For example: 2500."
     );
+
     state.step = "floor_area";
+    updateWorkflowStep(2);
   }
 };
 
@@ -54,17 +72,17 @@ async function handleSend() {
 
   try {
     const lowerText = text.toLowerCase();
-      
-  if (lowerText === "new scenario" || lowerText === "restart" || lowerText === "start over") {
-         restartChat();
+
+    if (lowerText === "new scenario" || lowerText === "restart" || lowerText === "start over") {
+      restartChat();
       return;
-      }
-  
-    /*
-      Supported rerun example:
-      "use 42.229212, -71.805525 and rerun the model for liquor store and area of 1000 square meters"
-      "use 42.229212, -71.805525 and rerun the model for NAICS code 445310 and area of 1000 square meters"
-    */
+    }
+
+    if (lowerText === "clear saved scenarios" || lowerText === "clear scenarios") {
+      clearSavedScenarios();
+      return;
+    }
+
     const rerunInputs = extractRerunInputs(text);
 
     if (rerunInputs) {
@@ -117,6 +135,10 @@ function handleCategoryStep(text) {
   state.business_category = parsed.value;
   state.display_category = parsed.display;
   state.step = "latitude";
+  state.current_result_saved = false;
+
+  updateWorkflowStep(2);
+  showSaveButton(false);
 
   addBotMessage(
     `Good. I will use "${state.display_category}" as the store category. ` +
@@ -131,6 +153,8 @@ function handleLatitudeStep(text) {
   if (mapCommand === "use map") {
     if (state.candidate_lat !== null && state.candidate_lon !== null) {
       state.step = "floor_area";
+      updateWorkflowStep(2);
+
       addBotMessage(
         `Great. I used the selected map location: ` +
         `${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}. ` +
@@ -154,6 +178,7 @@ function handleLatitudeStep(text) {
 
   state.candidate_lat = parsed.value;
   state.step = "longitude";
+  updateWorkflowStep(2);
 
   addBotMessage(
     "Great. Now enter the proposed store longitude as a number. For Worcester, an example is -71.80."
@@ -175,6 +200,7 @@ function handleLongitudeStep(text) {
   }
 
   state.step = "floor_area";
+  updateWorkflowStep(2);
 
   addBotMessage(
     `Great. The proposed location is latitude ${state.candidate_lat.toFixed(6)}, ` +
@@ -193,6 +219,10 @@ async function handleFloorAreaStep(text) {
 
   state.floor_area = parsed.value;
   state.step = "running";
+  state.current_result_saved = false;
+
+  updateWorkflowStep(3);
+  showSaveButton(false);
 
   addBotMessage(
     `Thanks. I will run the Huff model for ${state.display_category}, ` +
@@ -325,6 +355,10 @@ async function rerunModelFromMessage(inputs) {
   state.candidate_lon = inputs.candidate_lon;
   state.floor_area = inputs.floor_area;
   state.step = "running";
+  state.current_result_saved = false;
+
+  updateWorkflowStep(3);
+  showSaveButton(false);
 
   addBotMessage(
     `I found a new complete model input set. I will rerun the Huff model for ${state.business_category}, ` +
@@ -352,8 +386,6 @@ async function runModel() {
       candidate_lon: state.candidate_lon,
       business_category: state.business_category,
       floor_area: state.floor_area,
-
-      // Optional aliases for backend compatibility
       naics_code: state.business_category,
       floor_area_sqm: state.floor_area
     })
@@ -376,8 +408,11 @@ async function runModel() {
 
   state.last_result = data.result;
   state.step = "ready";
+  state.current_result_saved = false;
 
   renderResult(data.result);
+  updateWorkflowStep(3);
+  showSaveButton(true);
 
   if (window.plotCompetitors) {
     window.plotCompetitors(data.result.competitors);
@@ -385,11 +420,11 @@ async function runModel() {
 
   addBotMessage(
     data.explanation ||
-    "Model completed. You can now ask follow-up questions about the result, or type 'new scenario' to run another location."
+    "Model completed. You can now ask follow-up questions about the result, save this location, or type 'new scenario' to evaluate another location."
   );
 
   addBotMessage(
-    "You can ask a follow-up question, or type 'new scenario' to start over."
+    "You can ask a follow-up question, click 'Save This Location', or type 'new scenario' to start over."
   );
 }
 
@@ -509,12 +544,224 @@ function renderResult(result) {
   `;
 }
 
+function saveCurrentScenario() {
+  if (!state.last_result) {
+    addBotMessage("Please run the model before saving a scenario.");
+    return;
+  }
+
+  if (state.current_result_saved) {
+    addBotMessage("This result has already been saved. Type 'new scenario' to evaluate another location.");
+    return;
+  }
+
+  const marketShare = Number(state.last_result.market_share);
+  const predictedVisits = Number(state.last_result.predicted_visits);
+  const competitors = Array.isArray(state.last_result.competitors)
+    ? state.last_result.competitors
+    : [];
+
+  const scenario = {
+    id: Date.now(),
+    label: `Site ${state.saved_scenarios.length + 1}`,
+    business_category: state.display_category || state.business_category || "Unknown",
+    candidate_lat: state.candidate_lat,
+    candidate_lon: state.candidate_lon,
+    floor_area: state.floor_area,
+    predicted_visits: Number.isFinite(predictedVisits) ? predictedVisits : null,
+    market_share: Number.isFinite(marketShare) ? marketShare : null,
+    competitor_count: competitors.length
+  };
+
+  state.saved_scenarios.push(scenario);
+  state.current_result_saved = true;
+
+  saveScenariosToStorage();
+  renderSavedScenarios();
+  updateWorkflowStep(4);
+  showSaveButton(false);
+
+  addBotMessage(
+    `${scenario.label} saved. Type 'new scenario' to test another location, then save it to compare scenarios side by side.`
+  );
+}
+
+function renderSavedScenarios() {
+  const scenarioList = document.getElementById("scenarioList");
+  const scenarioCount = document.getElementById("scenarioCount");
+  const comparisonPanel = document.getElementById("comparisonPanel");
+  const comparisonTableBody = document.getElementById("comparisonTableBody");
+
+  if (!scenarioList || !scenarioCount || !comparisonPanel || !comparisonTableBody) {
+    return;
+  }
+
+  scenarioCount.textContent = `${state.saved_scenarios.length} saved`;
+
+  if (clearScenariosBtn) {
+    clearScenariosBtn.style.display = state.saved_scenarios.length > 0 ? "block" : "none";
+  }
+
+  if (state.saved_scenarios.length === 0) {
+    scenarioList.innerHTML = `
+      <div class="scenario-empty">
+        No scenarios saved yet. Run the model and save a location to compare results.
+      </div>
+    `;
+    comparisonPanel.style.display = "none";
+    comparisonTableBody.innerHTML = "";
+    return;
+  }
+
+  const bestScenarioId = getBestScenarioId();
+
+  scenarioList.innerHTML = state.saved_scenarios.map((scenario) => {
+    const isBest = scenario.id === bestScenarioId && state.saved_scenarios.length >= 2;
+    const marketSharePercent = formatMarketShare(scenario.market_share);
+    const visits = formatNumber(scenario.predicted_visits);
+
+    return `
+      <div class="scenario-card ${isBest ? "best" : ""}">
+        <div class="scenario-title">
+          <span>${escapeHtml(scenario.label)}</span>
+          ${isBest ? `<span class="best-label">Best</span>` : ""}
+        </div>
+        <div class="scenario-meta">
+          <strong>Store:</strong> ${escapeHtml(scenario.business_category)}<br>
+          <strong>Location:</strong> ${formatCoordinate(scenario.candidate_lat)}, ${formatCoordinate(scenario.candidate_lon)}<br>
+          <strong>Floor Area:</strong> ${escapeHtml(scenario.floor_area)} sqm
+        </div>
+        <div class="scenario-metrics">
+          <div class="scenario-metric">
+            <div class="metric-value">${visits}</div>
+            <div class="metric-label">Predicted Visits</div>
+          </div>
+          <div class="scenario-metric">
+            <div class="metric-value">${marketSharePercent}</div>
+            <div class="metric-label">Market Share</div>
+          </div>
+        </div>
+        <button class="scenario-remove" onclick="removeScenario(${scenario.id})">Remove</button>
+      </div>
+    `;
+  }).join("");
+
+  if (state.saved_scenarios.length >= 2) {
+    comparisonPanel.style.display = "block";
+
+    comparisonTableBody.innerHTML = state.saved_scenarios.map((scenario) => {
+      const isBest = scenario.id === bestScenarioId;
+      return `
+        <tr>
+          <td>${isBest ? "Best - " : ""}${escapeHtml(scenario.label)}</td>
+          <td>${escapeHtml(scenario.business_category)}</td>
+          <td>${formatNumber(scenario.predicted_visits)}</td>
+          <td>${formatMarketShare(scenario.market_share)}</td>
+          <td>${escapeHtml(scenario.competitor_count)}</td>
+        </tr>
+      `;
+    }).join("");
+  } else {
+    comparisonPanel.style.display = "none";
+    comparisonTableBody.innerHTML = "";
+  }
+}
+
+function getBestScenarioId() {
+  if (state.saved_scenarios.length === 0) {
+    return null;
+  }
+
+  let best = state.saved_scenarios[0];
+
+  state.saved_scenarios.forEach((scenario) => {
+    const currentVisits = Number(scenario.predicted_visits ?? -1);
+    const bestVisits = Number(best.predicted_visits ?? -1);
+
+    if (currentVisits > bestVisits) {
+      best = scenario;
+      return;
+    }
+
+    if (currentVisits === bestVisits) {
+      const currentShare = Number(scenario.market_share ?? -1);
+      const bestShare = Number(best.market_share ?? -1);
+
+      if (currentShare > bestShare) {
+        best = scenario;
+      }
+    }
+  });
+
+  return best.id;
+}
+
+function removeScenario(id) {
+  state.saved_scenarios = state.saved_scenarios.filter((scenario) => scenario.id !== id);
+  saveScenariosToStorage();
+  renderSavedScenarios();
+
+  if (state.saved_scenarios.length > 0) {
+    updateWorkflowStep(4);
+  }
+}
+
+window.removeScenario = removeScenario;
+
+function clearSavedScenarios() {
+  state.saved_scenarios = [];
+  saveScenariosToStorage();
+  renderSavedScenarios();
+  addBotMessage("Saved scenarios have been cleared.");
+}
+
+function saveScenariosToStorage() {
+  try {
+    localStorage.setItem("alsds_saved_scenarios", JSON.stringify(state.saved_scenarios));
+  } catch (error) {
+    console.warn("Could not save scenarios to localStorage:", error);
+  }
+}
+
+function loadSavedScenarios() {
+  try {
+    const stored = localStorage.getItem("alsds_saved_scenarios");
+    if (!stored) {
+      state.saved_scenarios = [];
+      return;
+    }
+
+    const parsed = JSON.parse(stored);
+    state.saved_scenarios = Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    state.saved_scenarios = [];
+  }
+}
+
+function showSaveButton(visible) {
+  if (!saveScenarioBtn) {
+    return;
+  }
+
+  saveScenarioBtn.style.display = visible ? "block" : "none";
+}
+
+function updateWorkflowStep(stepNumber) {
+  for (let i = 1; i <= 4; i++) {
+    const stepElement = document.getElementById(`step-${i}`);
+    if (!stepElement) continue;
+
+    stepElement.classList.toggle("active", i === stepNumber);
+    stepElement.classList.toggle("done", i < stepNumber);
+  }
+
+  const badge = document.getElementById("chatStepBadge");
+  if (badge) {
+    badge.textContent = `Step ${stepNumber}`;
+  }
+}
+
 function parseCoordinates(text) {
-  /*
-    Supports:
-    42.229212, -71.805525
-    use 42.229212, -71.805525 and rerun...
-  */
   const match = String(text).match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
 
   if (!match) {
@@ -546,6 +793,7 @@ function resetScenario() {
   state.candidate_lon = null;
   state.floor_area = null;
   state.last_result = null;
+  state.current_result_saved = false;
 
   const summary = document.getElementById("resultSummary");
   const tableWrap = document.getElementById("competitorTable");
@@ -557,32 +805,57 @@ function resetScenario() {
   if (tableWrap) {
     tableWrap.innerHTML = "";
   }
+
+  showSaveButton(false);
+  updateWorkflowStep(1);
 }
-
-
 
 function restartChat() {
   resetScenario();
 
-  // Clear chatbot messages
   if (chatMessages) {
     chatMessages.innerHTML = "";
   }
 
-  // Clear input box
   if (chatInput) {
     chatInput.value = "";
   }
 
-  // Start the guided workflow again
   addBotMessage(
     "Welcome. I will guide you through a new store-location scenario for Worcester, MA. " +
     "First, enter a store type or NAICS code. For example: liquor store or 445310."
   );
 }
 
+function formatMarketShare(value) {
+  const number = Number(value);
 
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
 
+  return `${(number * 100).toFixed(2)}%`;
+}
+
+function formatNumber(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+
+  return number.toFixed(2);
+}
+
+function formatCoordinate(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+
+  return number.toFixed(5);
+}
 
 function addBotMessage(text) {
   addMessage(text, "bot");
@@ -612,8 +885,3 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
-
-
-
-
