@@ -3,6 +3,7 @@ const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
 const saveScenarioBtn = document.getElementById("saveScenarioBtn");
 const clearScenariosBtn = document.getElementById("clearScenariosBtn");
+const resetScenarioBtn = document.getElementById("resetScenarioBtn");
 
 const openCategoryPopupBtn = document.getElementById("openCategoryPopupBtn");
 const closeCategoryPopupBtn = document.getElementById("closeCategoryPopupBtn");
@@ -49,6 +50,10 @@ chatInput.addEventListener("keydown", function (event) {
     handleSend();
   }
 });
+
+if (resetScenarioBtn) {
+  resetScenarioBtn.addEventListener("click", restartChat);
+}
 
 if (saveScenarioBtn) {
   saveScenarioBtn.addEventListener("click", saveCurrentScenario);
