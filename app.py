@@ -230,6 +230,65 @@ def api_run_huff():
         }), 500
 
 
+# ----------------------- List categories ---------------------------------
+
+
+@app.route("/api/categories", methods=["GET"])
+def api_categories():
+    """
+    Return supported store types and NAICS codes from Azure SQL.
+
+    We query calibrated_parameters because these are the categories
+    the Huff Model can actually run with.
+    """
+    try:
+        from db import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT
+                CAST([naics_code] AS NVARCHAR(50)) AS [naics_code],
+                COALESCE(
+                    NULLIF(LTRIM(RTRIM(CAST([top_category] AS NVARCHAR(255)))), ''),
+                    CAST([naics_code] AS NVARCHAR(50))
+                ) AS [store_type]
+            FROM dbo.[calibrated_parameters]
+            WHERE [naics_code] IS NOT NULL
+            ORDER BY [store_type], [naics_code]
+        """)
+
+        rows = cursor.fetchall()
+
+        categories = []
+        for row in rows:
+            categories.append({
+                "naics_code": str(row[0]),
+                "store_type": str(row[1])
+            })
+
+        return jsonify({
+            "ok": True,
+            "count": len(categories),
+            "categories": categories
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+
+
 
 # -------------------------
 # Ask Follow-up Questions
