@@ -1,11 +1,20 @@
 import os
 import threading
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, jsonify, request, render_template, abort
 from openai import AzureOpenAI
-
 from db import test_connection
 
 app = Flask(__name__)
+
+def migration_endpoints_enabled():
+    """
+    Migration endpoints were useful during development, but they should not
+    remain active in the final deployed app.
+
+    To enable temporarily, set this Azure App Service environment variable:
+    ENABLE_MIGRATION_ENDPOINTS=true
+    """
+    return os.getenv("ENABLE_MIGRATION_ENDPOINTS", "false").lower() == "true"
 
 
 # -------------------------
@@ -51,8 +60,10 @@ def dbcheck():
 def admin_migrate():
     """
     Starts the Azure SQL migration in a background thread.
-    Required by Module 7.
     """
+    if not migration_endpoints_enabled():
+        abort(404)
+        
     from migrate_to_azure_sql import execute_migration_task, migration_status
 
     if migration_status.get("is_running") is True:
@@ -65,7 +76,7 @@ def admin_migrate():
     thread = threading.Thread(target=execute_migration_task)
     thread.daemon = True
     thread.start()
-
+    
     return jsonify({
         "ok": True,
         "message": "Migration initialized successfully in the background.",
@@ -77,8 +88,9 @@ def admin_migrate():
 def admin_migrate_status():
     """
     Shows current migration progress.
-    Required by Module 7.
     """
+    if not migration_endpoints_enabled():
+        abort(404)
     from migrate_to_azure_sql import migration_status
 
     return jsonify(migration_status)
@@ -88,7 +100,6 @@ def admin_migrate_status():
 def db_structure():
     """
     Shows Azure SQL table names and row counts.
-    Required by Module 7.
     """
     try:
         from db import get_connection
