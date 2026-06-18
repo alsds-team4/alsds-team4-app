@@ -177,6 +177,20 @@ def api_run_huff():
                 "error": "Missing required inputs: " + ", ".join(missing)
             }), 400
 
+    
+         except ValueError as e:
+         return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 400
+
+        except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
         try:
             candidate_lat = float(candidate_lat)
             candidate_lon = float(candidate_lon)
