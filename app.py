@@ -261,11 +261,12 @@ def api_run_huff():
 @app.route("/api/categories", methods=["GET"])
 def api_categories():
     """
-    Return supported store types and NAICS codes from Azure SQL.
-
-    We query calibrated_parameters because these are the categories
-    the Huff Model can actually run with.
+    Return NAICS codes available in POI data.
+    Codes that exist in calibrated_parameters are marked as calibrated.
+    Codes that only exist in POI data are marked as fallback_default.
     """
+    conn = None
+
     try:
         from db import get_connection
 
@@ -273,14 +274,24 @@ def api_categories():
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT DISTINCT
-                CAST([naics_code] AS NVARCHAR(50)) AS [naics_code],
+            SELECT
+                CAST(p.[naics_code] AS NVARCHAR(50)) AS [naics_code],
                 COALESCE(
-                    NULLIF(LTRIM(RTRIM(CAST([top_category] AS NVARCHAR(255)))), ''),
-                    CAST([naics_code] AS NVARCHAR(50))
-                ) AS [store_type]
-            FROM dbo.[calibrated_parameters]
-            WHERE [naics_code] IS NOT NULL
+                    MAX(NULLIF(LTRIM(RTRIM(CAST(cp.[top_category] AS NVARCHAR(255)))), '')),
+                    MAX(NULLIF(LTRIM(RTRIM(CAST(p.[top_category] AS NVARCHAR(255)))), '')),
+                    MAX(NULLIF(LTRIM(RTRIM(CAST(p.[sub_category] AS NVARCHAR(255)))), '')),
+                    CAST(p.[naics_code] AS NVARCHAR(50))
+                ) AS [store_type],
+                CASE
+                    WHEN MAX(CASE WHEN cp.[naics_code] IS NOT NULL THEN 1 ELSE 0 END) = 1
+                    THEN 'calibrated'
+                    ELSE 'fallback_default'
+                END AS [parameter_status]
+            FROM dbo.[pois] p
+            LEFT JOIN dbo.[calibrated_parameters] cp
+                ON CAST(p.[naics_code] AS NVARCHAR(50)) = CAST(cp.[naics_code] AS NVARCHAR(50))
+            WHERE p.[naics_code] IS NOT NULL
+            GROUP BY CAST(p.[naics_code] AS NVARCHAR(50))
             ORDER BY [store_type], [naics_code]
         """)
 
@@ -290,7 +301,8 @@ def api_categories():
         for row in rows:
             categories.append({
                 "naics_code": str(row[0]),
-                "store_type": str(row[1])
+                "store_type": str(row[1]),
+                "parameter_status": str(row[2])
             })
 
         return jsonify({
@@ -306,11 +318,11 @@ def api_categories():
         }), 500
 
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 
