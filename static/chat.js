@@ -15,6 +15,10 @@ const categoryLoadingText = document.getElementById("categoryLoadingText");
 let categoryCache = [];
 let categoryLoaded = false;
 
+const PROFESSOR_NO_HISTORY_MESSAGE =
+  "There are no historical records for this NAICS code / business category in our data, " +
+  "and therefore the model cannot produce results for this NAICS code. " +
+  "Please try another NAICS code / business category.";
 
 const state = {
   step: "category",
@@ -100,8 +104,6 @@ if (categoryTableBody) {
   });
 }
 
-
-
 window.onMapLocationSelected = function (location) {
   state.candidate_lat = location.lat;
   state.candidate_lon = location.lon;
@@ -146,7 +148,7 @@ async function handleSend() {
     }
 
     if (state.step === "category") {
-      handleCategoryStep(text);
+      await handleCategoryStep(text);
       return;
     }
 
@@ -178,11 +180,7 @@ async function handleSend() {
     const message = error.message || String(error);
 
     if (message.toLowerCase().includes("no historical records")) {
-      addBotMessage(
-        "There are no historical records for this NAICS code / business category in our data, " +
-        "and therefore the model cannot produce results for this NAICS code. " +
-        "Please try another NAICS code / business category."
-      );
+      addErrorMessage(PROFESSOR_NO_HISTORY_MESSAGE);
     } else {
       addErrorMessage(message);
     }
@@ -193,7 +191,7 @@ async function handleSend() {
   }
 }
 
-function handleCategoryStep(text) {
+async function handleCategoryStep(text) {
   const parsed = parseBusinessCategory(text);
 
   if (!parsed.ok) {
@@ -201,8 +199,22 @@ function handleCategoryStep(text) {
     return;
   }
 
-  state.business_category = parsed.value;
-  state.display_category = parsed.display;
+  const validated = await validateCategoryAgainstAzure(parsed.value);
+
+  if (!validated.ok) {
+    addErrorMessage(PROFESSOR_NO_HISTORY_MESSAGE);
+    addBotMessage(
+      "Please enter another supported store type or NAICS code, or click “View supported store types / NAICS codes” to choose from Azure SQL."
+    );
+
+    state.step = "category";
+    updateWorkflowStep(1);
+    showSaveButton(false);
+    return;
+  }
+
+  state.business_category = validated.naics_code;
+  state.display_category = validated.display;
   state.step = "latitude";
   state.current_result_saved = false;
 
@@ -211,9 +223,127 @@ function handleCategoryStep(text) {
 
   addBotMessage(
     `Good. I will use "${state.display_category}" as the store category. ` +
+    `Parameter status: ${validated.parameter_status}. ` +
     "Now enter the proposed store latitude as a number. For example: 42.27. " +
     "You can also click the map to select a location."
   );
+}
+
+async function validateCategoryAgainstAzure(categoryInput) {
+  const value = String(categoryInput || "").trim();
+  const lowerValue = value.toLowerCase();
+
+  if (!categoryLoaded) {
+    await loadCategoriesFromAzure(true);
+  }
+
+  if (!Array.isArray(categoryCache) || categoryCache.length === 0) {
+    return {
+      ok: true,
+      naics_code: value,
+      display: value,
+      parameter_status: "unknown"
+    };
+  }
+
+  if (/^\d+$/.test(value)) {
+    const exactNaics = categoryCache.find((item) => {
+      return String(item.naics_code || "").trim() === value;
+    });
+
+    if (!exactNaics) {
+      return {
+        ok: false
+      };
+    }
+
+    return {
+      ok: true,
+      naics_code: String(exactNaics.naics_code),
+      display: `${exactNaics.store_type || "Unknown"} (${exactNaics.naics_code})`,
+      parameter_status: exactNaics.parameter_status || "unknown"
+    };
+  }
+
+  const exactStoreType = categoryCache.find((item) => {
+    return String(item.store_type || "").trim().toLowerCase() === lowerValue;
+  });
+
+  if (exactStoreType) {
+    return {
+      ok: true,
+      naics_code: String(exactStoreType.naics_code),
+      display: `${exactStoreType.store_type || "Unknown"} (${exactStoreType.naics_code})`,
+      parameter_status: exactStoreType.parameter_status || "unknown"
+    };
+  }
+
+  const containsStoreType = categoryCache.find((item) => {
+    const storeType = String(item.store_type || "").toLowerCase();
+    return storeType.includes(lowerValue) || lowerValue.includes(storeType);
+  });
+
+  if (containsStoreType) {
+    return {
+      ok: true,
+      naics_code: String(containsStoreType.naics_code),
+      display: `${containsStoreType.store_type || "Unknown"} (${containsStoreType.naics_code})`,
+      parameter_status: containsStoreType.parameter_status || "unknown"
+    };
+  }
+
+  const tokenMatch = findBestTokenCategoryMatch(lowerValue);
+
+  if (tokenMatch) {
+    return {
+      ok: true,
+      naics_code: String(tokenMatch.naics_code),
+      display: `${tokenMatch.store_type || "Unknown"} (${tokenMatch.naics_code})`,
+      parameter_status: tokenMatch.parameter_status || "unknown"
+    };
+  }
+
+  return {
+    ok: false
+  };
+}
+
+function findBestTokenCategoryMatch(inputText) {
+  const stopWords = new Set([
+    "store", "stores", "shop", "shops", "business", "type",
+    "the", "a", "an", "and", "or", "of", "for", "near", "nearby"
+  ]);
+
+  const tokens = inputText
+    .replace(/[,/()&-]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stopWords.has(token));
+
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  let bestMatch = null;
+  let bestScore = 0;
+
+  categoryCache.forEach((item) => {
+    const storeType = String(item.store_type || "").toLowerCase();
+    let score = 0;
+
+    tokens.forEach((token) => {
+      if (storeType.includes(token)) {
+        score += 1;
+      }
+    });
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = item;
+    }
+  });
+
+  return bestScore > 0 ? bestMatch : null;
 }
 
 function handleLatitudeStep(text) {
@@ -418,8 +548,18 @@ function parseFloorArea(text) {
 }
 
 async function rerunModelFromMessage(inputs) {
-  state.business_category = inputs.business_category;
-  state.display_category = inputs.business_category;
+  const validated = await validateCategoryAgainstAzure(inputs.business_category);
+
+  if (!validated.ok) {
+    addErrorMessage(PROFESSOR_NO_HISTORY_MESSAGE);
+    state.step = "category";
+    updateWorkflowStep(1);
+    showSaveButton(false);
+    return;
+  }
+
+  state.business_category = validated.naics_code;
+  state.display_category = validated.display;
   state.candidate_lat = inputs.candidate_lat;
   state.candidate_lon = inputs.candidate_lon;
   state.floor_area = inputs.floor_area;
@@ -430,7 +570,7 @@ async function rerunModelFromMessage(inputs) {
   showSaveButton(false);
 
   addBotMessage(
-    `I found a new complete model input set. I will rerun the Huff model for ${state.business_category}, ` +
+    `I found a new complete model input set. I will rerun the Huff model for ${state.display_category}, ` +
     `location (${state.candidate_lat.toFixed(6)}, ${state.candidate_lon.toFixed(6)}), ` +
     `and floor area ${state.floor_area} square meters.`
   );
@@ -489,11 +629,11 @@ async function runModel() {
 
   addBotMessage(
     data.explanation ||
-    "Model completed. You can now ask follow-up questions about the result, save this location, or type 'new scenario' to evaluate another location."
+    "Model completed. You can now ask follow-up questions about the result, save this location, or click Reset / New Scenario to evaluate another location."
   );
 
   addBotMessage(
-    "You can ask a follow-up question, click 'Save This Location', or type 'new scenario' to start over."
+    "You can ask a follow-up question, click Save This Location, or click Reset / New Scenario to start over."
   );
 }
 
@@ -620,7 +760,7 @@ function saveCurrentScenario() {
   }
 
   if (state.current_result_saved) {
-    addBotMessage("This result has already been saved. Type 'new scenario' to evaluate another location.");
+    addBotMessage("This result has already been saved. Click Reset / New Scenario to evaluate another location.");
     return;
   }
 
@@ -651,7 +791,7 @@ function saveCurrentScenario() {
   showSaveButton(false);
 
   addBotMessage(
-    `${scenario.label} saved. Type 'new scenario' to test another location, then save it to compare scenarios side by side.`
+    `${scenario.label} saved. Click Reset / New Scenario to test another location, then save it to compare scenarios side by side.`
   );
 }
 
@@ -896,7 +1036,6 @@ function restartChat() {
   );
 }
 
-
 async function openCategoryPopup() {
   if (!categoryModal) {
     return;
@@ -909,7 +1048,7 @@ async function openCategoryPopup() {
   }
 
   if (!categoryLoaded) {
-    await loadCategoriesFromAzure();
+    await loadCategoriesFromAzure(false);
   } else {
     renderCategoryTable("");
   }
@@ -927,12 +1066,12 @@ function closeCategoryPopup() {
   categoryModal.style.display = "none";
 }
 
-async function loadCategoriesFromAzure() {
-  if (categoryLoadingText) {
+async function loadCategoriesFromAzure(silent = false) {
+  if (!silent && categoryLoadingText) {
     categoryLoadingText.textContent = "Loading categories from Azure SQL...";
   }
 
-  if (categoryTableBody) {
+  if (!silent && categoryTableBody) {
     categoryTableBody.innerHTML = "";
   }
 
@@ -947,18 +1086,20 @@ async function loadCategoriesFromAzure() {
     categoryCache = Array.isArray(data.categories) ? data.categories : [];
     categoryLoaded = true;
 
-    if (categoryLoadingText) {
+    if (!silent && categoryLoadingText) {
       categoryLoadingText.textContent = `${categoryCache.length} supported categories loaded from Azure SQL.`;
     }
 
-    renderCategoryTable("");
+    if (!silent) {
+      renderCategoryTable("");
+    }
 
   } catch (error) {
-    if (categoryLoadingText) {
+    if (!silent && categoryLoadingText) {
       categoryLoadingText.textContent = `Failed to load categories: ${error.message}`;
     }
 
-    if (categoryTableBody) {
+    if (!silent && categoryTableBody) {
       categoryTableBody.innerHTML = `
         <tr>
           <td colspan="3" class="category-empty-row">
@@ -967,6 +1108,9 @@ async function loadCategoriesFromAzure() {
         </tr>
       `;
     }
+
+    categoryCache = [];
+    categoryLoaded = false;
   }
 }
 
@@ -980,18 +1124,20 @@ function renderCategoryTable(filterText) {
   const filtered = categoryCache.filter((item) => {
     const storeType = String(item.store_type || "").toLowerCase();
     const naicsCode = String(item.naics_code || "").toLowerCase();
+    const status = String(item.parameter_status || "").toLowerCase();
 
     return (
       !filter ||
       storeType.includes(filter) ||
-      naicsCode.includes(filter)
+      naicsCode.includes(filter) ||
+      status.includes(filter)
     );
   });
 
   if (filtered.length === 0) {
     categoryTableBody.innerHTML = `
       <tr>
-        <td colspan="3" class="category-empty-row">
+        <td colspan="4" class="category-empty-row">
           No matching store type or NAICS code found.
         </td>
       </tr>
@@ -1002,17 +1148,20 @@ function renderCategoryTable(filterText) {
   categoryTableBody.innerHTML = filtered.map((item) => {
     const storeType = escapeHtml(item.store_type || "Unknown");
     const naicsCode = escapeHtml(item.naics_code || "");
+    const parameterStatus = escapeHtml(item.parameter_status || "unknown");
 
     return `
       <tr>
         <td>${storeType}</td>
         <td><span class="category-code">${naicsCode}</span></td>
+        <td>${parameterStatus}</td>
         <td>
           <button
             type="button"
             class="use-category-btn"
             data-naics-code="${naicsCode}"
             data-store-type="${storeType}"
+            data-parameter-status="${parameterStatus}"
           >
             Use
           </button>
@@ -1026,16 +1175,22 @@ function useCategoryFromPopup(naicsCode, storeType) {
   closeCategoryPopup();
 
   if (!naicsCode) {
-    addBotMessage("This category does not have a valid NAICS code.");
+    addErrorMessage("This category does not have a valid NAICS code.");
     return;
   }
 
   if (state.step !== "category") {
     addBotMessage(
-      `Selected category: ${storeType} (${naicsCode}). Type "new scenario" first if you want to use it for a new model run.`
+      `Selected category: ${storeType} (${naicsCode}). Click Reset / New Scenario first if you want to use it for a new model run.`
     );
     return;
   }
+
+  const matched = categoryCache.find((item) => {
+    return String(item.naics_code || "") === String(naicsCode);
+  });
+
+  const parameterStatus = matched ? matched.parameter_status : "unknown";
 
   state.business_category = naicsCode;
   state.display_category = `${storeType} (${naicsCode})`;
@@ -1049,11 +1204,11 @@ function useCategoryFromPopup(naicsCode, storeType) {
 
   addBotMessage(
     `Good. I will use "${storeType}" with NAICS code ${naicsCode}. ` +
+    `Parameter status: ${parameterStatus}. ` +
     "Now enter the proposed store latitude as a number. For example: 42.27. " +
     "You can also click the map to select a location."
   );
 }
-
 
 function formatMarketShare(value) {
   const number = Number(value);
