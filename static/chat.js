@@ -175,21 +175,22 @@ async function handleSend() {
       return;
     }
   } catch (error) {
-  const message = error.message || String(error);
+    const message = error.message || String(error);
 
-  if (message.toLowerCase().includes("no historical records")) {
-    addBotMessage(
-      "There are no historical records for this NAICS code / business category in our data, " +
-      "and therefore the model cannot produce results for this NAICS code. " +
-      "Please try another NAICS code / business category."
-    );
-  } else {
-    addErrorMessage(message);
+    if (message.toLowerCase().includes("no historical records")) {
+      addBotMessage(
+        "There are no historical records for this NAICS code / business category in our data, " +
+        "and therefore the model cannot produce results for this NAICS code. " +
+        "Please try another NAICS code / business category."
+      );
+    } else {
+      addErrorMessage(message);
+    }
+
+    state.step = "category";
+    updateWorkflowStep(1);
+    showSaveButton(false);
   }
-
-  state.step = "category";
-  updateWorkflowStep(1);
-  showSaveButton(false);
 }
 
 function handleCategoryStep(text) {
