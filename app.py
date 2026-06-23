@@ -80,34 +80,34 @@ def dbcheck():
 # Azure SQL Migration Admin Routes
 # -------------------------
 
-@app.route("/admin/migrate")
-def admin_migrate():
-    """
-    Starts the Azure SQL migration in a background thread.
+# @app.route("/admin/migrate")
+# def admin_migrate():
+#     """
+#     Starts the Azure SQL migration in a background thread.
 
-    This endpoint is disabled by default in the final deployed app.
-    """
-    if not migration_endpoints_enabled():
-        abort(404)
+#     This endpoint is disabled by default in the final deployed app.
+#     """
+#     if not migration_endpoints_enabled():
+#         abort(404)
 
-    from migrate_to_azure_sql import execute_migration_task, migration_status
+#     from migrate_to_azure_sql import execute_migration_task, migration_status
 
-    if migration_status.get("is_running") is True:
-        return jsonify({
-            "ok": False,
-            "message": "Migration is already running.",
-            "current_progress": migration_status
-        }), 202
+#     if migration_status.get("is_running") is True:
+#         return jsonify({
+#             "ok": False,
+#             "message": "Migration is already running.",
+#             "current_progress": migration_status
+#         }), 202
 
-    thread = threading.Thread(target=execute_migration_task)
-    thread.daemon = True
-    thread.start()
+#     thread = threading.Thread(target=execute_migration_task)
+#     thread.daemon = True
+#     thread.start()
 
-    return jsonify({
-        "ok": True,
-        "message": "Migration initialized successfully in the background.",
-        "check_status_url": "/admin/migrate/status"
-    }), 202
+#     return jsonify({
+#         "ok": True,
+#         "message": "Migration initialized successfully in the background.",
+#         "check_status_url": "/admin/migrate/status"
+#     }), 202
 
 
 @app.route("/admin/migrate/status")
