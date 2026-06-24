@@ -530,15 +530,38 @@ def get_competitor_count(cursor, naics_code):
     return int(row_value(row, 0, 0) or 0)
 
 
-def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alpha, beta, limit=20):
+def get_competitor_sample(
+    cursor,
+    naics_code,
+    candidate_lat,
+    candidate_lon,
+    alpha,
+    beta,
+    cbg_rows=None,
+    demand_map=None,
+    existing_utility_map=None,
+    limit=10,
+):
     """
-    Return a lightweight competitor sample for frontend map/table display.
-    """
-    safe_limit = max(1, min(int(limit), 100))
+    Return 5-10 nearby competitors for frontend map/table display.
 
+    The professor requested replacing the old internal "attraction" value with
+    competitors' current market share. Here, competitor_current_market_share is
+    estimated from the same Huff logic, before adding the proposed store:
+
+        competitor_share = sum_cbg((U_competitor / U_existing_category) * demand_cbg)
+                           / sum_cbg(demand_cbg)
+
+    This keeps competitor information in the same NAICS/category as the proposed
+    store and avoids comparing unrelated markets.
+    """
+    safe_limit = max(5, min(int(limit), 10))
+
+    # Pull a larger candidate set first, then sort by real distance in Python.
+    # This avoids showing a long list while still making the table useful.
     cursor.execute(
-        f"""
-        SELECT TOP {safe_limit}
+        """
+        SELECT TOP 200
             [placekey],
             [location_name],
             [latitude],
@@ -554,6 +577,12 @@ def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alph
     rows = cursor.fetchall()
 
     competitors = []
+    total_category_demand = 0.0
+
+    if cbg_rows is not None and demand_map is not None:
+        for cbg_row in cbg_rows:
+            geoid = str(row_value(cbg_row, 0))
+            total_category_demand += max(float(demand_map.get(geoid, 0.0) or 0.0), 0.0)
 
     for row in rows:
         placekey = row_value(row, 0, "")
@@ -562,28 +591,60 @@ def get_competitor_sample(cursor, naics_code, candidate_lat, candidate_lon, alph
         lon = safe_float(row_value(row, 3))
         size = safe_float(row_value(row, 4))
 
-        distance_miles = None
-        attraction = None
+        if lat is None or lon is None:
+            continue
 
-        if lat is not None and lon is not None:
-            distance_miles = haversine_miles(candidate_lat, candidate_lon, lat, lon)
+        distance_miles = haversine_miles(candidate_lat, candidate_lon, lat, lon)
+        safe_size = max(size if size is not None else 100.0, 1.0)
 
-        if size is not None and distance_miles is not None:
-            distance_m = max(distance_miles * 1609.344, 100.0)
-            attraction = (size ** alpha) / (distance_m ** beta)
+        competitor_current_visits = 0.0
+        competitor_current_market_share = None
+
+        if (
+            cbg_rows is not None
+            and demand_map is not None
+            and existing_utility_map is not None
+            and total_category_demand > 0
+        ):
+            comp_x, comp_y = TRANSFORMER.transform(lon, lat)
+
+            for cbg_row in cbg_rows:
+                geoid = str(row_value(cbg_row, 0))
+                proj_x = safe_float(row_value(cbg_row, 1))
+                proj_y = safe_float(row_value(cbg_row, 2))
+
+                if proj_x is None or proj_y is None:
+                    continue
+
+                demand = float(demand_map.get(geoid, 0.0) or 0.0)
+                existing_utility = float(existing_utility_map.get(geoid, 0.0) or 0.0)
+
+                if demand <= 0 or existing_utility <= 0:
+                    continue
+
+                dx = proj_x - comp_x
+                dy = proj_y - comp_y
+                distance_m = max(math.sqrt(dx * dx + dy * dy), 100.0)
+                utility_competitor = (safe_size ** alpha) / (distance_m ** beta)
+                competitor_current_visits += (utility_competitor / existing_utility) * demand
+
+            competitor_current_market_share = competitor_current_visits / total_category_demand
 
         competitors.append({
             "name": str(location_name or "Unknown"),
             "placekey": str(placekey or ""),
             "lat": lat,
             "lon": lon,
-            "size": size,
-            "distance_miles": round(distance_miles, 3) if distance_miles is not None else None,
-            "attraction": round(attraction, 8) if attraction is not None else None,
+            "size": round(safe_size, 2),
+            "distance_miles": round(distance_miles, 3),
+            "current_market_share": round(competitor_current_market_share, 6)
+            if competitor_current_market_share is not None else None,
+            "current_estimated_visits": round(competitor_current_visits, 2)
+            if competitor_current_market_share is not None else None,
         })
 
-    return competitors
-
+    competitors.sort(key=lambda item: item.get("distance_miles", 999999))
+    return competitors[:safe_limit]
 
 # ---------------------------------------------------------------------
 # Huff computation
@@ -733,7 +794,10 @@ def run_huff_model(
             candidate_lon=candidate_lon,
             alpha=alpha,
             beta=beta,
-            limit=20,
+            cbg_rows=cbg_rows,
+            demand_map=demand_map,
+            existing_utility_map=existing_utility_map,
+            limit=10,
         )
 
         runtime_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -741,6 +805,8 @@ def run_huff_model(
         return {
             "predicted_visits": round(total_predicted_visits, 2),
             "market_share": round(market_share, 6),
+            "resolved_naics_code": str(resolved_naics_code),
+            "resolved_store_type": str(resolved_store_type),
             "competitors": competitors,
             "runtime_ms": runtime_ms,
             "notes": (
