@@ -438,7 +438,7 @@ def fallback_explanation(result):
         f"The model estimates about {predicted_visits} predicted visits and a market share of {market_share}. "
         f"The result is based on the selected location, store size, nearby competitors, and demand records. "
         f"The parameter source used for this run was {source}. "
-        "Review the competitor table and saved scenario comparison to decide whether this location is stronger than alternatives."
+        "Review the competitor table and saved scenario comparison only when the saved scenarios use the same NAICS code/business category."
     )
 
 
@@ -470,7 +470,8 @@ Competitors (sample):
 Explain clearly:
 1. What the predicted visits and market share mean
 2. What factors likely influenced the result
-3. Keep it short and intuitive, about 3-5 sentences
+3. Mention that scenario comparisons are valid only when the compared scenarios use the same NAICS code/business category
+4. Keep it short and intuitive, about 3-5 sentences
 """
 
     try:
@@ -519,6 +520,7 @@ Answer clearly and concisely, grounded in the model output.
 Important rules:
 - Do not invent data.
 - Do not claim that you reran the Huff model.
+- If the user asks to compare scenarios with different NAICS codes/business categories, say that the model should not compare them because a department store market share and a cafe market share are different markets.
 - If the user asks to rerun the model with new inputs, explain that the app can rerun the model when the message includes all required inputs: NAICS code, floor area, latitude, and longitude.
 """
 
@@ -553,3 +555,9 @@ Important rules:
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
+
+
+
+
+
+
