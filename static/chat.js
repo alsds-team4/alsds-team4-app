@@ -41,6 +41,7 @@ const LIMITS = {
 loadSavedScenarios();
 updateWorkflowStep(1);
 renderSavedScenarios();
+initializeTeamBranding();
 
 addBotMessage(
   "Welcome. I will guide you through a store-location scenario for Worcester, MA. " +
@@ -711,17 +712,37 @@ function renderResult(result) {
   const marketShare = Number(result.market_share);
   const runtime = result.runtime_ms ?? "N/A";
   const notes = result.notes ?? "";
+  const inputs = result.inputs || {};
+  const resolvedNaics = result.resolved_naics_code || inputs.resolved_naics_code || state.business_category || "N/A";
+  const resolvedStoreType = result.resolved_store_type || inputs.resolved_store_type || state.display_category || "N/A";
 
   summary.innerHTML = `
-    <strong>Predicted Visits:</strong> ${escapeHtml(predictedVisits)}<br>
-    <strong>Estimated Market Share:</strong> ${Number.isFinite(marketShare) ? (marketShare * 100).toFixed(2) + "%" : "N/A"}<br>
-    <strong>Runtime:</strong> ${escapeHtml(runtime)} ms<br>
-    <strong>Data Source:</strong> Azure SQL<br>
-    <strong>How to read this:</strong> Predicted visits estimate the number of customer trips captured by the proposed store. Market share estimates the store's share of category demand compared with nearby competitors.<br>
-    <strong>Notes:</strong> ${escapeHtml(notes)}
+    <div class="result-kpi-grid">
+      <div class="result-kpi-card">
+        <div class="result-kpi-label">Predicted Visits</div>
+        <div class="result-kpi-value">${escapeHtml(predictedVisits)}</div>
+      </div>
+      <div class="result-kpi-card">
+        <div class="result-kpi-label">Estimated Market Share</div>
+        <div class="result-kpi-value">${Number.isFinite(marketShare) ? (marketShare * 100).toFixed(2) + "%" : "N/A"}</div>
+      </div>
+      <div class="result-kpi-card">
+        <div class="result-kpi-label">NAICS / Market</div>
+        <div class="result-kpi-value small">${escapeHtml(resolvedNaics)}</div>
+      </div>
+    </div>
+    <div class="result-note-block">
+      <strong>Business Category:</strong> ${escapeHtml(resolvedStoreType)}<br>
+      <strong>Runtime:</strong> ${escapeHtml(runtime)} ms<br>
+      <strong>Data Source:</strong> Azure SQL<br>
+      <strong>Important comparison rule:</strong> Only compare saved scenarios with the same NAICS code / business category. A department store result should not be compared with a cafe result because they are different markets.<br>
+      <strong>How to read this:</strong> Predicted visits estimate the number of customer trips captured by the proposed store. Market share estimates the store's share of category demand compared with nearby competitors in the same NAICS market.<br>
+      <strong>Notes:</strong> ${escapeHtml(notes)}
+    </div>
+    ${renderResultVisualization(predictedVisits, marketShare)}
   `;
 
-  const competitors = Array.isArray(result.competitors) ? result.competitors : [];
+  const competitors = Array.isArray(result.competitors) ? result.competitors.slice(0, 10) : [];
 
   if (competitors.length === 0) {
     tableWrap.innerHTML = "No competitor records returned.";
@@ -733,9 +754,10 @@ function renderResult(result) {
       <thead>
         <tr>
           <th>Name</th>
-          <th>Distance</th>
-          <th>Size</th>
-          <th>Attraction</th>
+          <th>Distance (miles)</th>
+          <th>Size (sqm)</th>
+          <th>Current Market Share</th>
+          <th>Current Est. Visits</th>
         </tr>
       </thead>
       <tbody>
@@ -744,12 +766,35 @@ function renderResult(result) {
             <td>${escapeHtml(c.name ?? c.place_name ?? c.poi_name ?? "Unknown")}</td>
             <td>${escapeHtml(c.distance_miles ?? c.distance ?? "N/A")}</td>
             <td>${escapeHtml(c.size ?? c.floor_area ?? c.area ?? "N/A")}</td>
-            <td>${escapeHtml(c.attraction ?? "N/A")}</td>
+            <td>${formatMarketShare(c.current_market_share)}</td>
+            <td>${formatNumber(c.current_estimated_visits)}</td>
           </tr>
         `).join("")}
       </tbody>
     </table>
-    <p class="hint">Higher attraction means a stronger nearby competitor based on store size and distance.</p>
+    <p class="hint">Showing the closest ${competitors.length} competitors in the same NAICS market. Current market share replaces the old attraction column because it is easier for a business owner to interpret.</p>
+  `;
+}
+
+function renderResultVisualization(predictedVisits, marketShare) {
+  const visitsNumber = Number(predictedVisits);
+  const shareNumber = Number(marketShare);
+  const sharePercent = Number.isFinite(shareNumber) ? Math.max(0, Math.min(100, shareNumber * 100)) : 0;
+  const visitsLabel = Number.isFinite(visitsNumber) ? visitsNumber.toFixed(2) : "N/A";
+  const shareLabel = Number.isFinite(shareNumber) ? `${(shareNumber * 100).toFixed(2)}%` : "N/A";
+
+  return `
+    <div class="result-visualization">
+      <div class="visualization-title">Result Visualization</div>
+      <div class="visual-row">
+        <div class="visual-label">Estimated Market Share</div>
+        <div class="visual-bar-track">
+          <div class="visual-bar-fill" style="width: ${sharePercent}%;"></div>
+        </div>
+        <div class="visual-value">${shareLabel}</div>
+      </div>
+      <div class="visual-caption">Predicted visits: <strong>${escapeHtml(visitsLabel)}</strong>. Use this chart to quickly communicate the model result in the final presentation.</div>
+    </div>
   `;
 }
 
@@ -774,6 +819,7 @@ function saveCurrentScenario() {
     id: Date.now(),
     label: `Site ${state.saved_scenarios.length + 1}`,
     business_category: state.display_category || state.business_category || "Unknown",
+    naics_code: state.last_result.resolved_naics_code || state.last_result.inputs?.resolved_naics_code || state.business_category || "Unknown",
     candidate_lat: state.candidate_lat,
     candidate_lon: state.candidate_lon,
     floor_area: state.floor_area,
@@ -822,7 +868,8 @@ function renderSavedScenarios() {
     return;
   }
 
-  const bestScenarioId = getBestScenarioId();
+  const comparisonStatus = getComparisonStatus();
+  const bestScenarioId = comparisonStatus.canCompare ? getBestScenarioId() : null;
 
   scenarioList.innerHTML = state.saved_scenarios.map((scenario) => {
     const isBest = scenario.id === bestScenarioId && state.saved_scenarios.length >= 2;
@@ -837,6 +884,7 @@ function renderSavedScenarios() {
         </div>
         <div class="scenario-meta">
           <strong>Store:</strong> ${escapeHtml(scenario.business_category)}<br>
+          <strong>NAICS:</strong> ${escapeHtml(scenario.naics_code || "Unknown")}<br>
           <strong>Location:</strong> ${formatCoordinate(scenario.candidate_lat)}, ${formatCoordinate(scenario.candidate_lon)}<br>
           <strong>Floor Area:</strong> ${escapeHtml(scenario.floor_area)} sqm
         </div>
@@ -858,6 +906,19 @@ function renderSavedScenarios() {
   if (state.saved_scenarios.length >= 2) {
     comparisonPanel.style.display = "block";
 
+    if (!comparisonStatus.canCompare) {
+      comparisonTableBody.innerHTML = `
+        <tr>
+          <td colspan="5" class="comparison-warning">
+            These saved scenarios use different NAICS codes (${escapeHtml(comparisonStatus.naicsList.join(", "))}).
+            The model should not compare market-share predictions across different business categories.
+            Please compare only scenarios from the same NAICS market.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
     comparisonTableBody.innerHTML = state.saved_scenarios.map((scenario) => {
       const isBest = scenario.id === bestScenarioId;
       return `
@@ -876,8 +937,21 @@ function renderSavedScenarios() {
   }
 }
 
+function getComparisonStatus() {
+  const naicsSet = new Set(
+    state.saved_scenarios
+      .map((scenario) => String(scenario.naics_code || scenario.business_category || "Unknown").trim())
+      .filter(Boolean)
+  );
+
+  return {
+    canCompare: naicsSet.size <= 1,
+    naicsList: Array.from(naicsSet)
+  };
+}
+
 function getBestScenarioId() {
-  if (state.saved_scenarios.length === 0) {
+  if (state.saved_scenarios.length === 0 || !getComparisonStatus().canCompare) {
     return null;
   }
 
@@ -1208,6 +1282,81 @@ function useCategoryFromPopup(naicsCode, storeType) {
     "Now enter the proposed store latitude as a number. For example: 42.27. " +
     "You can also click the map to select a location."
   );
+}
+
+function initializeTeamBranding() {
+  const header = document.querySelector("header");
+
+  if (!header) {
+    return;
+  }
+
+  const h1 = header.querySelector("h1");
+  const h2 = header.querySelector("h2");
+
+  if (h1) {
+    h1.innerHTML = `<span class="team-name-highlight">Team 4 V3</span> Huff Model Location Analytics`;
+  }
+
+  if (h2) {
+    h2.textContent = "Retail Market Share Prediction Dashboard";
+  }
+
+  if (!document.getElementById("aboutUsBtn")) {
+    const aboutButton = document.createElement("button");
+    aboutButton.id = "aboutUsBtn";
+    aboutButton.className = "about-us-btn";
+    aboutButton.type = "button";
+    aboutButton.textContent = "About Us";
+    aboutButton.addEventListener("click", openAboutUsModal);
+    header.appendChild(aboutButton);
+  }
+
+  if (!document.getElementById("aboutUsModal")) {
+    const modal = document.createElement("div");
+    modal.id = "aboutUsModal";
+    modal.className = "modal-backdrop";
+    modal.style.display = "none";
+    modal.innerHTML = `
+      <div class="modal-box about-modal-box">
+        <div class="modal-header">
+          <div>
+            <h2>About Us</h2>
+            <p>Team 4 V3 built this Huff Model dashboard to help business owners evaluate store-location scenarios in Worcester, MA.</p>
+          </div>
+          <button type="button" class="modal-close-btn" id="closeAboutUsBtn">×</button>
+        </div>
+        <div class="about-modal-content">
+          <div class="about-team-name">Team 4 V3</div>
+          <p>Our app combines Azure SQL data, NAICS-based business categories, Huff gravity-model logic, competitor market-share estimates, map visualization, and scenario saving.</p>
+          <p><strong>Important model rule:</strong> market-share predictions should only be compared across scenarios with the same NAICS code / business category.</p>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const closeButton = modal.querySelector("#closeAboutUsBtn");
+    closeButton.addEventListener("click", closeAboutUsModal);
+    modal.addEventListener("click", function (event) {
+      if (event.target === modal) {
+        closeAboutUsModal();
+      }
+    });
+  }
+}
+
+function openAboutUsModal() {
+  const modal = document.getElementById("aboutUsModal");
+  if (modal) {
+    modal.style.display = "flex";
+  }
+}
+
+function closeAboutUsModal() {
+  const modal = document.getElementById("aboutUsModal");
+  if (modal) {
+    modal.style.display = "none";
+  }
 }
 
 function formatMarketShare(value) {
