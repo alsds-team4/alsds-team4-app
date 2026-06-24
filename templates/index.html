@@ -2,53 +2,56 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>AI-Assisted Location Decision Support System</title>
+  <title>Team Seven Hills Analytics | AI-Assisted Location Decision Support System</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 
-  
 <body>
   <header>
-    <h1>AI-Assisted Location Decision Support System</h1>
-    <h2>Team Seven Hills Analytics</h2>
+    <h1><span class="team-name-highlight">Team Seven Hills Analytics</span> Huff Model Location Analytics</h1>
+    <h2>Retail Market Share Prediction Dashboard</h2>
     <p>Worcester, MA | Huff Model Prototype</p>
+    <button id="aboutUsBtn" type="button" class="about-us-btn">About Us</button>
   </header>
 
-<section class="landing-description">
-  <div class="landing-text">
-    <h2>Location Decision Support for Small Business Planning</h2>
-    <p>
-      This dashboard helps users evaluate potential store locations in Worcester, MA using a Huff Model.
-      The system estimates how much customer demand a proposed location may capture based on business type,
-      store size, geographic location, and nearby competitors.
-    </p>
-    <p>
-      Users can enter a store type or NAICS code, select a proposed location on the map or type latitude and
-      longitude, and enter the planned floor area. The dashboard then returns predicted visits, estimated
-      market share, nearby competitor information, and a plain-English explanation to support location
-      decision-making.
-    </p>
-  </div>
+  <section class="landing-description">
+    <div class="landing-text">
+      <h2>Location Decision Support for Small Business Planning</h2>
+      <p>
+        This dashboard helps users evaluate potential store locations in Worcester, MA using a Huff Model.
+        The system estimates how much customer demand a proposed location may capture based on business type,
+        store size, geographic location, and nearby competitors in the same NAICS market.
+      </p>
+      <p>
+        Users can enter a store type or NAICS code, select a proposed location on the map or type latitude and
+        longitude, and enter the planned floor area. The dashboard then returns predicted visits, estimated
+        market share, nearby competitors' current market share, and a plain-English explanation to support
+        location decision-making.
+      </p>
+      <p>
+        <strong>Important comparison rule:</strong> saved scenarios should only be compared when they use the same
+        NAICS code / business category. A department store scenario should not be compared with a cafe scenario.
+      </p>
+    </div>
 
-  <div class="landing-cards">
-    <div class="landing-card">
-      <strong>Inputs</strong>
-      <span>Store type, NAICS code, location, and floor area</span>
+    <div class="landing-cards">
+      <div class="landing-card">
+        <strong>Inputs</strong>
+        <span>Store type, NAICS code, location, and floor area</span>
+      </div>
+      <div class="landing-card">
+        <strong>Outputs</strong>
+        <span>Predicted visits, proposed-store market share, and competitors' current market share</span>
+      </div>
+      <div class="landing-card">
+        <strong>Decision Support</strong>
+        <span>Save and compare scenarios only within the same NAICS market</span>
+      </div>
     </div>
-    <div class="landing-card">
-      <strong>Outputs</strong>
-      <span>Predicted visits, market share, and competitor attraction scores</span>
-    </div>
-    <div class="landing-card">
-      <strong>Decision Support</strong>
-      <span>Save and compare scenarios before choosing a location</span>
-    </div>
-  </div>
-</section>
-
+  </section>
 
   <div class="workflow-bar">
     <div class="workflow-step active" id="step-1">
@@ -81,7 +84,7 @@
       </div>
 
       <button id="openCategoryPopupBtn" type="button" class="light-btn category-help-btn">
-      View supported store types / NAICS codes
+        View supported store types / NAICS codes
       </button>
 
       <div id="chatMessages" class="chat-messages"></div>
@@ -97,9 +100,9 @@
       </div>
 
       <div class="reset-scenario-box">
-      <button id="resetScenarioBtn" type="button" class="reset-scenario-btn">
+        <button id="resetScenarioBtn" type="button" class="reset-scenario-btn">
           Reset / New Scenario
-      </button>
+        </button>
       </div>
 
       <div class="hint">
@@ -142,7 +145,7 @@
         No model result yet.
       </div>
 
-      <h3>Nearby Competitors / Attraction Scores</h3>
+      <h3>Nearby Competitors / Current Market Share</h3>
       <div id="competitorTable" class="table-wrap"></div>
     </section>
 
@@ -153,7 +156,7 @@
       </div>
 
       <div class="hint">
-        Save model results here to compare different locations or floor-area choices.
+        Save model results here to compare different locations or floor-area choices. Comparisons are valid only within the same NAICS market.
       </div>
 
       <button id="saveScenarioBtn" class="secondary-btn" style="display:none;">
@@ -178,6 +181,7 @@
               <tr>
                 <th>Scenario</th>
                 <th>Store Type</th>
+                <th>NAICS</th>
                 <th>Visits</th>
                 <th>Market Share</th>
                 <th>Competitors</th>
@@ -190,53 +194,46 @@
     </section>
   </main>
 
-
-
-
-
   <div id="categoryModal" class="modal-backdrop" style="display:none;">
-  <div class="modal-box">
-    <div class="modal-header">
-      <div>
-        <h2>Supported Store Types</h2>
-        <p>
-          These store types are loaded from Azure SQL and represent categories supported by the Huff Model.
-        </p>
+    <div class="modal-box">
+      <div class="modal-header">
+        <div>
+          <h2>Supported Store Types</h2>
+          <p>
+            These store types are loaded from Azure SQL and represent categories supported by the Huff Model.
+          </p>
+        </div>
+        <button id="closeCategoryPopupBtn" type="button" class="modal-close-btn">×</button>
       </div>
-      <button id="closeCategoryPopupBtn" type="button" class="modal-close-btn">×</button>
-    </div>
 
-    <input
-      id="categorySearchInput"
-      class="modal-search-input"
-      type="text"
-      placeholder="Search store type or NAICS code, e.g., grocery or 445310"
-    />
+      <input
+        id="categorySearchInput"
+        class="modal-search-input"
+        type="text"
+        placeholder="Search store type or NAICS code, e.g., grocery or 445310"
+      />
 
-    <div id="categoryLoadingText" class="modal-status">
-      Loading categories from Azure SQL...
-    </div>
+      <div id="categoryLoadingText" class="modal-status">
+        Loading categories from Azure SQL...
+      </div>
 
-    <div class="modal-table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Store Type</th>
-            <th>NAICS Code</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="categoryTableBody"></tbody>
+      <div class="modal-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Store Type</th>
+              <th>NAICS Code</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="categoryTableBody"></tbody>
         </table>
-       </div>
-     </div>
-   </div>
+      </div>
+    </div>
+  </div>
 
-
-  
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/map.js"></script>
   <script src="/static/chat.js"></script>
 </body>
 </html>
-
