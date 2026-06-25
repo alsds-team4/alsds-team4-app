@@ -989,3 +989,10 @@ th {
     font-size: 34px;
   }
 }
+
+
+#aboutUsBtn,
+.about-us-btn,
+#aboutUsModal {
+  display: none !important;
+}
