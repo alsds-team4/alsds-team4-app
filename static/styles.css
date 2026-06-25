@@ -990,9 +990,9 @@ th {
   }
 }
 
-
-#aboutUsBtn,
-.about-us-btn,
-#aboutUsModal {
+header button,
+.site-header button,
+button[id*="about" i],
+button[class*="about" i] {
   display: none !important;
 }
